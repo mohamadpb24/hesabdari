@@ -18,7 +18,8 @@ class MainApp(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("سیستم حسابداری فروش اقساطی")
-        self.setGeometry(100, 100, 1200, 800)
+        # *** حذف setGeometry برای حل مشکل اندازه پنجره ***
+        # self.setGeometry(100, 100, 1200, 800) 
         
         self.central_widget = QWidget()
         self.setCentralWidget(self.central_widget)
@@ -44,6 +45,7 @@ class MainApp(QMainWindow):
         self.stacked_widget = QStackedWidget()
         self.stacked_widget.setStyleSheet("background-color: #ecf0f1; border-radius: 10px;")
         
+        # ساخت نمونه از تمام پنل‌ها
         self.dashboard_panel = DashboardPanel()
         self.customer_panel = CustomerPanel()
         self.cashbox_panel = CashboxPanel()
@@ -60,18 +62,16 @@ class MainApp(QMainWindow):
             "transactions": self.transaction_panel
         }
         
-        self.stacked_widget.addWidget(self.panels["dashboard"])
-        self.stacked_widget.addWidget(self.panels["customers"])
-        self.stacked_widget.addWidget(self.panels["cashboxes"])
-        self.stacked_widget.addWidget(self.panels["loans"])
-        self.stacked_widget.addWidget(self.panels["installments"])
-        self.stacked_widget.addWidget(self.panels["transactions"])
+        # افزودن پنل‌ها به QStackedWidget
+        for panel in self.panels.values():
+            self.stacked_widget.addWidget(panel)
         
         self.main_layout.addWidget(self.sidebar_widget)
         self.main_layout.addWidget(self.stacked_widget)
         
         self.add_sidebar_buttons()
-        self.stacked_widget.setCurrentIndex(0)
+        # تنظیم داشبورد به عنوان پنل پیش‌فرض
+        self.stacked_widget.setCurrentWidget(self.panels["dashboard"])
 
     def add_sidebar_buttons(self):
         buttons_info = [
@@ -86,6 +86,7 @@ class MainApp(QMainWindow):
         for text, panel_name in buttons_info:
             btn = self.create_button(text)
             self.sidebar_layout.addWidget(btn)
+            # استفاده از lambda برای ارسال نام پنل به تابع switch_panel
             btn.clicked.connect(lambda _, name=panel_name: self.switch_panel(self.panels[name]))
 
     def create_button(self, text):
@@ -109,6 +110,7 @@ class MainApp(QMainWindow):
 
     def switch_panel(self, panel):
         self.stacked_widget.setCurrentWidget(panel)
+        # اطمینان از وجود تابع refresh_data قبل از فراخوانی
         if hasattr(panel, 'refresh_data'):
             panel.refresh_data()
 
@@ -117,5 +119,11 @@ if __name__ == "__main__":
     app = QApplication(sys.argv)
     app.setFont(QFont("B Yekan", 10))
     main_window = MainApp()
-    main_window.show()
+    
+    # *** تغییر کلیدی 1: نمایش پنجره به صورت ماکسیمایز ***
+    main_window.showMaximized()
+    
+    # *** تغییر کلیدی 2: فراخوانی refresh_data برای داشبورد در ابتدای برنامه ***
+    main_window.dashboard_panel.refresh_data()
+    
     sys.exit(app.exec_())

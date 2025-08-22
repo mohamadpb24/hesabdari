@@ -3,7 +3,7 @@ from PyQt5.QtWidgets import (
     QTableWidget, QTableWidgetItem, QHeaderView, QMessageBox,
     QLineEdit, QFormLayout, QDialog, QDoubleSpinBox
 )
-from PyQt5.QtGui import QFont
+from PyQt5.QtGui import QFont, QColor
 from PyQt5.QtCore import Qt
 
 from db_manager import DatabaseManager
@@ -28,14 +28,9 @@ class CashboxPanel(QWidget):
         add_btn.setFont(QFont("B Yekan", 12))
         add_btn.setStyleSheet("""
             QPushButton {
-                background-color: #2ecc71;
-                color: white;
-                border-radius: 10px;
-                padding: 5px;
+                background-color: #2ecc71; color: white; border-radius: 10px; padding: 5px;
             }
-            QPushButton:hover {
-                background-color: #27ae60;
-            }
+            QPushButton:hover { background-color: #27ae60; }
         """)
         add_btn.clicked.connect(self.show_add_cashbox_form)
         
@@ -66,20 +61,16 @@ class CashboxPanel(QWidget):
                     self.clear_layout(child.layout())
 
     def load_cash_boxes(self):
-    # دریافت اطلاعات صندوق‌ها
         cash_boxes = self.db_manager.get_all_cash_boxes()
         self.cashbox_table.setRowCount(0)
         
         for row, box in enumerate(cash_boxes):
             self.cashbox_table.insertRow(row)
-            
-            # در اینجا 3 مقدار از تاپل box دریافت می‌شود
             box_id, name, balance = box
             
             self.cashbox_table.setItem(row, 0, QTableWidgetItem(name))
             self.cashbox_table.setItem(row, 1, QTableWidgetItem(format_money(balance)))
             
-            # Action Buttons
             ops_widget = QWidget()
             ops_layout = QHBoxLayout(ops_widget)
             edit_btn = QPushButton("ویرایش")
@@ -95,7 +86,6 @@ class CashboxPanel(QWidget):
             show_transactions_btn.setStyleSheet("background-color: #3498db; color: white; border-radius: 5px; padding: 5px;")
             show_transactions_btn.clicked.connect(lambda _, b=(box_id, name, balance): self.show_transactions_dialog(b))
             self.cashbox_table.setCellWidget(row, 3, show_transactions_btn)
-
 
     def show_add_cashbox_form(self, cashbox_data=None):
         dialog = QDialog(self)
@@ -123,14 +113,9 @@ class CashboxPanel(QWidget):
         save_btn = QPushButton(save_btn_text)
         save_btn.setStyleSheet("""
             QPushButton { 
-                background-color: #2ecc71; 
-                color: white; 
-                border-radius: 10px; 
-                padding: 10px; 
+                background-color: #2ecc71; color: white; border-radius: 10px; padding: 10px; 
             }
-            QPushButton:hover { 
-                background-color: #27ae60; 
-            }
+            QPushButton:hover { background-color: #27ae60; }
         """)
         save_btn.clicked.connect(lambda: self.save_cash_box(dialog, cashbox_data))
         form_layout.addRow(save_btn)
@@ -164,48 +149,52 @@ class CashboxPanel(QWidget):
                                      QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
         
         if reply == QMessageBox.Yes:
-            self.db_manager.delete_cash_box(box_id)
-            self.load_cash_boxes()
-            QMessageBox.information(self, "حذف موفق", "صندوق با موفقیت حذف شد.")
+            if self.db_manager.delete_cash_box(box_id):
+                self.load_cash_boxes()
+                QMessageBox.information(self, "حذف موفق", "صندوق با موفقیت حذف شد.")
+            else:
+                QMessageBox.critical(self, "خطا", "خطا در حذف صندوق.")
             
+    # *** این تابع به طور کامل بازنویسی شد ***
     def show_transactions_dialog(self, cashbox_data):
+        selected_cashbox_id = cashbox_data[0]
         dialog = QDialog(self)
         dialog.setWindowTitle(f"تراکنش‌های صندوق: {cashbox_data[1]}")
-        dialog.setGeometry(200, 200, 800, 600)
+        dialog.setGeometry(200, 200, 850, 600)
         layout = QVBoxLayout(dialog)
         
         transactions_table = QTableWidget()
         transactions_table.setColumnCount(5)
-        transactions_table.setHorizontalHeaderLabels(["نوع", "نام مشتری", "مبلغ", "تاریخ", "شرح"])
+        transactions_table.setHorizontalHeaderLabels(["تاریخ", "نوع تراکنش", "مبلغ", "طرف حساب", "شرح"])
         transactions_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        transactions_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeToContents)
         
-        transactions = self.db_manager.get_transactions_by_cashbox(cashbox_data[0])
+        transactions = self.db_manager.get_transactions_by_cashbox(selected_cashbox_id)
         transactions_table.setRowCount(len(transactions))
         
         for row, transaction in enumerate(transactions):
-            trans_id, trans_type, amount, date, source_id, destination_id, description = transaction
+            # تعیین نوع نمایشی تراکنش
+            trans_type = transaction['type']
+            display_type_map = {
+                "loan_payment": "پرداخت وام",
+                "installment_received": "دریافت قسط",
+                "settlement_received": "تسویه کامل"
+            }
+            display_type = display_type_map.get(trans_type, trans_type)
+
+            # رنگ‌بندی مبلغ بر اساس ورودی/خروجی
+            amount_item = QTableWidgetItem(format_money(transaction['amount']))
+            if transaction['source_id'] == selected_cashbox_id: # خروجی
+                amount_item.setForeground(QColor("#c0392b")) # قرمز
+            else: # ورودی
+                amount_item.setForeground(QColor("#27ae60")) # سبز
             
-            # تعیین نوع تراکنش به زبان فارسی
-            if trans_type == "loan_payment":
-                display_type = "پرداخت وام"
-                customer_id = destination_id
-            elif trans_type == "installment_received":
-                display_type = "دریافت قسط"
-                customer_id = source_id
-            else:
-                display_type = trans_type
-                customer_id = None
-            
-            # دریافت نام مشتری
-            customer_name = "ناشناس"
-            if customer_id:
-                customer_name = self.db_manager.get_customer_name(customer_id)
-            
-            transactions_table.setItem(row, 0, QTableWidgetItem(display_type))
-            transactions_table.setItem(row, 1, QTableWidgetItem(customer_name))
-            transactions_table.setItem(row, 2, QTableWidgetItem(format_money(amount)))
-            transactions_table.setItem(row, 3, QTableWidgetItem(date))
-            transactions_table.setItem(row, 4, QTableWidgetItem(description))
+            # پر کردن جدول
+            transactions_table.setItem(row, 0, QTableWidgetItem(transaction['date']))
+            transactions_table.setItem(row, 1, QTableWidgetItem(display_type))
+            transactions_table.setItem(row, 2, amount_item)
+            transactions_table.setItem(row, 3, QTableWidgetItem(transaction['customer_name'] or "ناشناس"))
+            transactions_table.setItem(row, 4, QTableWidgetItem(transaction['description']))
 
         layout.addWidget(transactions_table)
         dialog.exec_()
