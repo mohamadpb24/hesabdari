@@ -333,14 +333,13 @@ class CustomerPanel(QWidget):
         dialog.exec_()
 
     def print_single_customer_report(self, customer_data):
-        customer_id = customer_data['id']
-        loans = self.db_manager.get_customer_loans_for_report(customer_id)
+        # فراخوانی تابع جدید برای دریافت تمام اطلاعات با یک اتصال
+        loans, installments_by_loan = self.db_manager.get_full_customer_report_data(customer_data['id'])
         
-        installments_by_loan = {}
-        for loan in loans:
-            installments = self.db_manager.get_loan_installments(loan['id'])
-            installments_by_loan[loan['id']] = installments
-            
+        if loans is None:
+            QMessageBox.critical(self, "خطا", "خطا در دریافت اطلاعات از پایگاه داده.")
+            return
+
         file_path, _ = QFileDialog.getSaveFileName(self, "ذخیره پرونده مشتری", f"پرونده_{customer_data['name']}.pdf", "PDF Files (*.pdf)")
 
         if file_path:
@@ -349,3 +348,13 @@ class CustomerPanel(QWidget):
                 QMessageBox.information(self, "موفقیت", "پرونده مشتری با موفقیت ذخیره شد.")
             else:
                 QMessageBox.critical(self, "خطا", "خطا در ساخت گزارش PDF.")
+
+
+
+
+
+
+
+
+
+

@@ -31,6 +31,17 @@ class LoanPanel(QWidget):
         title_label.setAlignment(Qt.AlignCenter)
 
         form_layout = QFormLayout()
+        # Input fields with original styling
+        line_edit_style = """
+            QLineEdit {
+                background-color: white; border: 1px solid #bdc3c7;
+                border-radius: 5px; padding: 5px;
+            }
+        """
+        self.transaction_date_input = QLineEdit()
+        self.transaction_date_input.setStyleSheet(line_edit_style)
+        self.transaction_date_input.setText(jdatetime.date.today().strftime('%Y/%m/%d'))
+        form_layout.addRow("تاریخ پرداخت وام:", self.transaction_date_input)
 
         # Selection fields
         self.customer_combo = QComboBox()
@@ -53,13 +64,6 @@ class LoanPanel(QWidget):
         self.load_cashboxes_to_combo()
         form_layout.addRow("انتخاب صندوق:", self.cashbox_combo)
 
-        # Input fields with original styling
-        line_edit_style = """
-            QLineEdit {
-                background-color: white; border: 1px solid #bdc3c7;
-                border-radius: 5px; padding: 5px;
-            }
-        """
         self.amount_input = QLineEdit()
         self.amount_input.setPlaceholderText("مبلغ وام را وارد کنید")
         self.amount_input.textChanged.connect(self.format_and_calculate)
@@ -213,57 +217,76 @@ class LoanPanel(QWidget):
 
     # *** تابع save_loan با منطق صحیح و تاریخ امروز برای تراکنش ***
     def save_loan(self):
-        try:
-            customer_id = self.customer_combo.currentData()
-            customer_name = self.customer_combo.currentText()
-            cash_box_id = self.cashbox_combo.currentData()
-            loan_amount = int(self.amount_input.text().replace("،", ""))
-            loan_term = int(self.term_input.text())
-            interest_rate = float(self.interest_input.text())
-            start_date_str = self.start_date_input.text()
-            user_description = self.description_input.text()
+            try:
+                # --- مرحله ۱: خواندن تمام مقادیر از فرم ---
+                customer_id = self.customer_combo.currentData()
+                customer_name = self.customer_combo.currentText()
+                cash_box_id = self.cashbox_combo.currentData()
+                loan_amount = int(self.amount_input.text().replace("،", ""))
+                loan_term = int(self.term_input.text())
+                interest_rate = float(self.interest_input.text())
+                start_date_str = self.start_date_input.text()
+                user_description = self.description_input.text()
+                transaction_date_str = self.transaction_date_input.text() # <-- متغیر در اینجا تعریف شد
 
-            if not all([customer_id, cash_box_id, loan_amount > 0, loan_term > 0, interest_rate >= 0, start_date_str]):
-                QMessageBox.warning(self, "خطا", "لطفا تمام فیلدهای لازم را به درستی پر کنید.")
-                return
-
-            # تاریخ تراکنش، همان روز جاری است
-            transaction_date_str = jdatetime.date.today().strftime('%Y/%m/%d')
-            
-            # 1. ثبت وام در دیتابیس
-            loan_id = self.db_manager.add_loan(customer_id, cash_box_id, loan_amount, loan_term, interest_rate, start_date_str)
-            if not loan_id:
-                QMessageBox.critical(self, "خطا", "خطا در ثبت اطلاعات وام.")
-                return
-
-            # 2. به‌روزرسانی موجودی صندوق (کاهش موجودی)
-            if not self.db_manager.update_cash_box_balance(cash_box_id, -loan_amount):
-                QMessageBox.critical(self, "خطا", "خطا در به‌روزرسانی موجودی صندوق.")
-                return
-
-            # 3. ثبت یک تراکنش واحد با تاریخ امروز
-            transaction_description = f"پرداخت وام به {customer_name}"
-            if user_description:
-                transaction_description += f" - {user_description}"
-            
-            self.db_manager.record_transaction(
-                "loan_payment", loan_amount, transaction_date_str, 
-                cash_box_id, customer_id, transaction_description
-            )
-
-            # 4. ثبت اقساط وام
-            start_date_jalali = jdatetime.date(*map(int, start_date_str.split('/')))
-            installment_amount = self.total_loan_amount_with_interest / loan_term
-            
-            for i in range(loan_term):
-                due_date_jalali = add_months_jalali(start_date_jalali, i)
-                due_date_str = due_date_jalali.strftime('%Y/%m/%d')
-                if not self.db_manager.add_installment(loan_id, due_date_str, installment_amount):
-                    QMessageBox.critical(self, "خطا", f"خطا در ثبت قسط شماره {i+1}.")
+                # --- مرحله ۲: اعتبارسنجی مقادیر خوانده شده ---
+                if not all([customer_id, cash_box_id, loan_amount > 0, loan_term > 0, interest_rate >= 0, start_date_str, transaction_date_str]):
+                    QMessageBox.warning(self, "خطا", "لطفا تمام فیلدهای لازم را به درستی پر کنید.")
                     return
-            
-            QMessageBox.information(self, "موفقیت", "وام و اقساط با موفقیت ثبت شد.")
-            self.refresh_data()
 
-        except (ValueError, IndexError) as e:
-            QMessageBox.warning(self, "خطا", f"مقادیر ورودی نامعتبر است. لطفا فیلدها را بررسی کنید.\n{e}")
+                # 1. ثبت وام در دیتابیس
+                loan_id = self.db_manager.add_loan(customer_id, cash_box_id, loan_amount, loan_term, interest_rate, start_date_str)
+                if not loan_id:
+                    QMessageBox.critical(self, "خطا", "خطا در ثبت اطلاعات وام.")
+                    return
+
+                # 2. به‌روزرسانی موجودی صندوق (کاهش موجودی)
+                if not self.db_manager.update_cash_box_balance(cash_box_id, -loan_amount):
+                    QMessageBox.critical(self, "خطا", "خطا در به‌روزرسانی موجودی صندوق.")
+                    return
+
+                # 3. ثبت یک تراکنش واحد با تاریخ امروز
+                transaction_description = f"پرداخت وام به {customer_name}"
+                if user_description:
+                    transaction_description += f" - {user_description}"
+                
+                self.db_manager.record_transaction(
+                    "loan_payment", loan_amount, transaction_date_str, 
+                    cash_box_id, customer_id, transaction_description
+                )
+
+                # 4. ثبت اقساط وام
+                start_date_jalali = jdatetime.date(*map(int, start_date_str.split('/')))
+                installment_amount = self.total_loan_amount_with_interest / loan_term
+                
+                for i in range(loan_term):
+                    due_date_jalali = add_months_jalali(start_date_jalali, i)
+                    due_date_str = due_date_jalali.strftime('%Y/%m/%d')
+                    if not self.db_manager.add_installment(loan_id, due_date_str, installment_amount):
+                        QMessageBox.critical(self, "خطا", f"خطا در ثبت قسط شماره {i+1}.")
+                        return
+                
+                QMessageBox.information(self, "موفقیت", "وام و اقساط با موفقیت ثبت شد.")
+                self.refresh_data()
+
+            except (ValueError, IndexError) as e:
+                QMessageBox.warning(self, "خطا", f"مقادیر ورودی نامعتبر است. لطفا فیلدها را بررسی کنید.\n{e}")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

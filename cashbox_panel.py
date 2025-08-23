@@ -1,13 +1,16 @@
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QTableWidget, QTableWidgetItem, QHeaderView, QMessageBox,
-    QLineEdit, QFormLayout, QDialog, QDoubleSpinBox
+    QLineEdit, QFormLayout, QDialog, QDoubleSpinBox, QFileDialog
 )
 from PyQt5.QtGui import QFont, QColor
 from PyQt5.QtCore import Qt
 
 from db_manager import DatabaseManager
 from utils import format_money
+import report_generator
+
+
 
 class CashboxPanel(QWidget):
     def __init__(self):
@@ -73,12 +76,24 @@ class CashboxPanel(QWidget):
             
             ops_widget = QWidget()
             ops_layout = QHBoxLayout(ops_widget)
+            
+            # دکمه‌های قبلی
             edit_btn = QPushButton("ویرایش")
             delete_btn = QPushButton("حذف")
+            
+            # --- دکمه جدید ---
+            report_btn = QPushButton("چاپ گزارش")
+            report_btn.setStyleSheet("background-color: #17a2b8; color: white;")
+            
             edit_btn.clicked.connect(lambda _, b=(box_id, name, balance): self.show_add_cashbox_form(b))
             delete_btn.clicked.connect(lambda _, b_id=box_id: self.delete_cash_box_confirmation(b_id))
+            
+            # --- اتصال دکمه جدید ---
+            report_btn.clicked.connect(lambda _, b={'id': box_id, 'name': name, 'balance': balance}: self.print_cashbox_report(b))
+
             ops_layout.addWidget(edit_btn)
             ops_layout.addWidget(delete_btn)
+            ops_layout.addWidget(report_btn) # --- اضافه کردن دکمه به لایه ---
             ops_layout.setContentsMargins(0, 0, 0, 0)
             self.cashbox_table.setCellWidget(row, 2, ops_widget)
             
@@ -86,6 +101,7 @@ class CashboxPanel(QWidget):
             show_transactions_btn.setStyleSheet("background-color: #3498db; color: white; border-radius: 5px; padding: 5px;")
             show_transactions_btn.clicked.connect(lambda _, b=(box_id, name, balance): self.show_transactions_dialog(b))
             self.cashbox_table.setCellWidget(row, 3, show_transactions_btn)
+
 
     def show_add_cashbox_form(self, cashbox_data=None):
         dialog = QDialog(self)
@@ -198,3 +214,36 @@ class CashboxPanel(QWidget):
 
         layout.addWidget(transactions_table)
         dialog.exec_()
+
+    def print_cashbox_report(self, cashbox_data):
+            transactions = self.db_manager.get_transactions_by_cashbox(cashbox_data['id'])
+            if not transactions:
+                QMessageBox.warning(self, "گزارش خالی", "هیچ تراکنشی برای این صندوق ثبت نشده است.")
+                return
+
+            file_path, _ = QFileDialog.getSaveFileName(
+                self, 
+                "ذخیره گزارش صندوق", 
+                f"گزارش_{cashbox_data['name']}.pdf", 
+                "PDF Files (*.pdf)"
+            )
+
+            if file_path:
+                success = report_generator.create_cashbox_report(cashbox_data, transactions, file_path)
+                if success:
+                    QMessageBox.information(self, "موفقیت", f"گزارش با موفقیت در مسیر زیر ذخیره شد:\n{file_path}")
+                else:
+                    QMessageBox.critical(self, "خطا", "خطا در ساخت گزارش PDF صندوق.")
+
+
+
+
+
+
+
+
+
+
+
+
+

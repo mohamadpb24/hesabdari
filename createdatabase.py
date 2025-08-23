@@ -47,19 +47,17 @@ def create_database_and_tables():
     if not connection:
         return
     
-    # --- تغییر اصلی: حذف دیتابیس قبلی ---
-    # این دستور اگر دیتابیس با همین نام وجود داشته باشد، آن را حذف می‌کند
+    # --- حذف دیتابیس قبلی برای اطمینان از ساختار جدید ---
     drop_db_query = f"DROP DATABASE IF EXISTS {db_name}"
     execute_query(connection, drop_db_query)
     
-    # 2. ایجاد دیتابیس
-    create_db_query = f"CREATE DATABASE IF NOT EXISTS {db_name}"
+    # 2. ایجاد دیتابیس جدید
+    create_db_query = f"CREATE DATABASE {db_name} CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
     execute_query(connection, create_db_query)
     
     # 3. بستن اتصال و ایجاد اتصال جدید با دیتابیس
     connection.close()
     
-    # اتصال جدید برای کار روی دیتابیس تازه ساخته شده
     try:
         connection = mysql.connector.connect(
             host=db_config['host'],
@@ -72,7 +70,7 @@ def create_database_and_tables():
         print(f"خطا در اتصال به دیتابیس: '{err}'")
         return
 
-    # 4. تعریف کوئری‌های SQL برای ساخت جداول
+    # 4. تعریف کوئری‌های SQL برای ساخت تمام جداول
     create_tables_queries = [
         """
         CREATE TABLE IF NOT EXISTS customers (
@@ -116,10 +114,43 @@ def create_database_and_tables():
             due_date VARCHAR(10) NOT NULL,
             amount_due DECIMAL(15, 0) NOT NULL,
             amount_paid DECIMAL(15, 0) DEFAULT 0,
+            payment_date VARCHAR(10) NULL,
             is_paid BOOLEAN DEFAULT FALSE,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
             FOREIGN KEY (loan_id) REFERENCES loans(id) ON DELETE CASCADE
+        );
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS payment_details (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            installment_id INT NOT NULL,
+            amount DECIMAL(15, 0) NOT NULL,
+            payment_date VARCHAR(10) NOT NULL,
+            cashbox_id INT NOT NULL,
+            description TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (installment_id) REFERENCES installments(id) ON DELETE CASCADE,
+            FOREIGN KEY (cashbox_id) REFERENCES cash_boxes(id) ON DELETE CASCADE
+        );
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS expense_categories (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            name VARCHAR(255) NOT NULL UNIQUE
+        );
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS expenses (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            category_id INT NOT NULL,
+            cashbox_id INT NOT NULL,
+            amount DECIMAL(15, 0) NOT NULL,
+            description TEXT,
+            expense_date VARCHAR(10) NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (category_id) REFERENCES expense_categories(id),
+            FOREIGN KEY (cashbox_id) REFERENCES cash_boxes(id) ON DELETE CASCADE
         );
         """,
         """

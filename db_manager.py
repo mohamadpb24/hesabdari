@@ -1,6 +1,7 @@
 import mysql.connector
 from mysql.connector import Error
 import configparser
+import jdatetime
 
 class DatabaseManager:
     def __init__(self):
@@ -227,7 +228,7 @@ class DatabaseManager:
             WHERE 
                 (t.type = 'loan_payment' AND t.source_id = %(cashbox_id)s) OR
                 (t.type IN ('installment_received', 'settlement_received') AND t.destination_id = %(cashbox_id)s)
-            ORDER BY t.date DESC, t.id DESC
+            ORDER BY t.date ASC, t.id ASC
         """
         values = {'cashbox_id': cashbox_id}
         cursor = conn.cursor(dictionary=True)
@@ -558,21 +559,22 @@ class DatabaseManager:
                 conn.close()
 
     def get_loan_installments(self, loan_id):
-        conn = self.create_connection()
-        if conn is None: return []
-        query = "SELECT id, due_date, amount_due, amount_paid FROM installments WHERE loan_id = %s"
-        values = (loan_id,)
-        cursor = conn.cursor()
-        try:
-            cursor.execute(query, values)
-            installments = cursor.fetchall()
-            return installments
-        except Error as err:
-            print(f"خطا در خواندن اقساط وام: '{err}'"); return []
-        finally:
-            if conn.is_connected():
-                cursor.close()
-                conn.close()
+            conn = self.create_connection()
+            if conn is None: return []
+            # ستون جدید payment_date را نیز انتخاب می‌کنیم
+            query = "SELECT id, due_date, amount_due, amount_paid, payment_date FROM installments WHERE loan_id = %s"
+            values = (loan_id,)
+            cursor = conn.cursor()
+            try:
+                cursor.execute(query, values)
+                installments = cursor.fetchall()
+                return installments
+            except Error as err:
+                print(f"خطا در خواندن اقساط وام: '{err}'"); return []
+            finally:
+                if conn.is_connected():
+                    cursor.close()
+                    conn.close()
 
     def get_loan_details_by_id(self, loan_id):
         conn = self.create_connection()
@@ -591,40 +593,43 @@ class DatabaseManager:
                 cursor.close()
                 conn.close()
             
-    def pay_installment(self, installment_id, amount_paid, cash_box_id):
-        conn = self.create_connection()
-        if conn is None: return False
-        
-        cursor = conn.cursor(dictionary=True)
-        cursor.execute("SELECT amount_due FROM installments WHERE id = %s", (installment_id,))
-        installment = cursor.fetchone()
-        if not installment: return False
-        
-        query_update_installment = """
-            UPDATE installments 
-            SET amount_paid = amount_paid + %s, 
-                is_paid = (amount_paid + %s >= amount_due)
-            WHERE id = %s
-        """
-        values_update_installment = (amount_paid, amount_paid, installment_id)
-        
-        query_update_cashbox = "UPDATE cash_boxes SET balance = balance + %s WHERE id = %s"
-        values_update_cashbox = (amount_paid, cash_box_id)
-        
-        try:
-            conn.autocommit = False
-            cursor.execute(query_update_installment, values_update_installment)
-            cursor.execute(query_update_cashbox, values_update_cashbox)
-            conn.commit()
-            return True
-        except Error as err:
-            conn.rollback()
-            print(f"خطا در پرداخت قسط: '{err}'"); return False
-        finally:
-            conn.autocommit = True
-            if conn.is_connected():
-                cursor.close()
-                conn.close()
+    def pay_installment(self, installment_id, amount_paid, cash_box_id, description, payment_date):
+            conn = self.create_connection()
+            if conn is None: return False
+            
+            cursor = conn.cursor(dictionary=True)
+            
+            try:
+                conn.autocommit = False
+                
+                # 1. ثبت جزئیات پرداخت با تاریخ ورودی کاربر
+                query_insert_payment = "INSERT INTO payment_details (installment_id, amount, payment_date, cashbox_id, description) VALUES (%s, %s, %s, %s, %s)"
+                cursor.execute(query_insert_payment, (installment_id, amount_paid, payment_date, cash_box_id, description))
+                
+                # 2. به‌روزرسانی مبلغ کل و تاریخ اولین پرداخت در جدول اقساط
+                query_update_installment = """
+                    UPDATE installments 
+                    SET amount_paid = amount_paid + %s,
+                        is_paid = (amount_paid >= amount_due),
+                        payment_date = IF(payment_date IS NULL, %s, payment_date)
+                    WHERE id = %s
+                """
+                cursor.execute(query_update_installment, (amount_paid, payment_date, installment_id))
+                
+                # 3. به‌روزرسانی موجودی صندوق
+                query_update_cashbox = "UPDATE cash_boxes SET balance = balance + %s WHERE id = %s"
+                cursor.execute(query_update_cashbox, (amount_paid, cash_box_id))
+
+                conn.commit()
+                return True
+            except Error as err:
+                conn.rollback()
+                print(f"خطا در پرداخت قسط: '{err}'"); return False
+            finally:
+                conn.autocommit = True
+                if conn and conn.is_connected():
+                    cursor.close()
+                    conn.close()
 
     def get_installment_details(self, installment_id):
         conn = self.create_connection()
@@ -713,3 +718,279 @@ class DatabaseManager:
             if conn.is_connected():
                 cursor.close()
                 conn.close()
+
+    def get_payment_details_for_installment(self, installment_id):
+            conn = self.create_connection()
+            if conn is None: return []
+            query = "SELECT amount, payment_date, description FROM payment_details WHERE installment_id = %s ORDER BY payment_date ASC"
+            cursor = conn.cursor(dictionary=True)
+            try:
+                cursor.execute(query, (installment_id,))
+                return cursor.fetchall()
+            except Error as err:
+                print(f"خطا در خواندن جزئیات پرداخت: '{err}'")
+                return []
+            finally:
+                if conn.is_connected():
+                    cursor.close()
+                    conn.close()
+
+# توابع مربوط به دسته‌بندی هزینه‌ها
+    def add_expense_category(self, name):
+        conn = self.create_connection()
+        if conn is None: return False
+        query = "INSERT INTO expense_categories (name) VALUES (%s)"
+        cursor = conn.cursor()
+        try:
+            cursor.execute(query, (name,))
+            conn.commit()
+            return True
+        except Error as err:
+            print(f"خطا در افزودن دسته‌بندی هزینه: '{err}'")
+            return False
+        finally:
+            if conn.is_connected(): cursor.close(); conn.close()
+
+    def get_all_expense_categories(self):
+        conn = self.create_connection()
+        if conn is None: return []
+        query = "SELECT id, name FROM expense_categories ORDER BY name ASC"
+        cursor = conn.cursor(dictionary=True)
+        try:
+            cursor.execute(query)
+            return cursor.fetchall()
+        except Error as err:
+            print(f"خطا در خواندن دسته‌بندی‌های هزینه: '{err}'"); return []
+        finally:
+            if conn.is_connected(): cursor.close(); conn.close()
+
+    # تابع اصلی برای ثبت هزینه
+    def add_expense(self, category_id, cashbox_id, amount, description, expense_date):
+            conn = self.create_connection()
+            if conn is None: return False
+            
+            cursor = conn.cursor()
+            try:
+                # شروع یک تراکنش واحد
+                conn.autocommit = False
+                
+                # 1. ثبت هزینه در جدول expenses
+                query_add_expense = "INSERT INTO expenses (category_id, cashbox_id, amount, description, expense_date) VALUES (%s, %s, %s, %s, %s)"
+                cursor.execute(query_add_expense, (category_id, cashbox_id, amount, description, expense_date))
+                
+                # 2. کسر مبلغ هزینه از موجودی صندوق (با همان اتصال)
+                query_update_cashbox = "UPDATE cash_boxes SET balance = balance - %s WHERE id = %s"
+                cursor.execute(query_update_cashbox, (amount, cashbox_id))
+                
+                # 3. ثبت تراکنش هزینه (با همان اتصال)
+                trans_desc = f"ثبت هزینه: {description}"
+                query_record_transaction = "INSERT INTO transactions (type, amount, date, source_id, destination_id, description) VALUES (%s, %s, %s, %s, %s, %s)"
+                cursor.execute(query_record_transaction, ('expense', amount, expense_date, cashbox_id, None, trans_desc))
+
+                # اگر همه دستورات موفق بودند، تراکنش را تایید نهایی کن
+                conn.commit()
+                return True
+            except Error as err:
+                # در صورت بروز هرگونه خطا، تمام تغییرات را به حالت اول برگردان
+                conn.rollback()
+                print(f"خطا در ثبت هزینه: '{err}'")
+                return False
+            finally:
+                # بازگرداندن به حالت پیش‌فرض و بستن اتصال
+                conn.autocommit = True
+                if conn and conn.is_connected():
+                    cursor.close()
+                    conn.close()
+
+    def get_all_expenses(self):
+            conn = self.create_connection()
+            if conn is None: return []
+            query = """
+                SELECT 
+                    e.expense_date,
+                    ec.name as category_name,
+                    cb.name as cashbox_name,
+                    e.amount,
+                    e.description
+                FROM expenses e
+                JOIN expense_categories ec ON e.category_id = ec.id
+                JOIN cash_boxes cb ON e.cashbox_id = cb.id
+                ORDER BY e.expense_date DESC, e.id DESC
+            """
+            cursor = conn.cursor(dictionary=True)
+            try:
+                cursor.execute(query)
+                return cursor.fetchall()
+            except Error as err:
+                print(f"خطا در خواندن هزینه‌ها: '{err}'")
+                return []
+            finally:
+                if conn.is_connected(): cursor.close(); conn.close()
+
+    def create_loan_and_installments(self, loan_data, installments_data):
+            conn = self.create_connection()
+            if conn is None: return False, "عدم اتصال به پایگاه داده"
+            
+            cursor = conn.cursor()
+            try:
+                # شروع یک تراکنش واحد و یکپارچه
+                conn.autocommit = False
+                
+                # 1. ثبت وام در جدول loans
+                loan_query = """
+                    INSERT INTO loans (customer_id, cash_box_id, amount, loan_term, interest_rate, start_date) 
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                """
+                loan_values = (
+                    loan_data['customer_id'], loan_data['cash_box_id'], loan_data['amount'],
+                    loan_data['loan_term'], loan_data['interest_rate'], loan_data['start_date']
+                )
+                cursor.execute(loan_query, loan_values)
+                loan_id = cursor.lastrowid # گرفتن ID وام ثبت شده
+
+                # 2. کسر مبلغ وام از موجودی صندوق
+                update_cashbox_query = "UPDATE cash_boxes SET balance = balance - %s WHERE id = %s"
+                cursor.execute(update_cashbox_query, (loan_data['amount'], loan_data['cash_box_id']))
+                
+                # 3. ثبت تراکنش پرداخت وام
+                transaction_query = """
+                    INSERT INTO transactions (type, amount, date, source_id, destination_id, description) 
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                """
+                transaction_values = (
+                    'loan_payment', loan_data['amount'], loan_data['transaction_date'],
+                    loan_data['cash_box_id'], loan_data['customer_id'], loan_data['description']
+                )
+                cursor.execute(transaction_query, transaction_values)
+                
+                # 4. ثبت تمام اقساط در جدول installments
+                installment_query = "INSERT INTO installments (loan_id, due_date, amount_due) VALUES (%s, %s, %s)"
+                # آماده‌سازی داده‌های اقساط با loan_id صحیح
+                installments_with_loan_id = [(loan_id, inst['due_date'], inst['amount_due']) for inst in installments_data]
+                cursor.executemany(installment_query, installments_with_loan_id)
+
+                # اگر همه مراحل موفق بودند، تراکنش را تایید نهایی کن
+                conn.commit()
+                return True, "وام با موفقیت ثبت شد."
+            except Error as err:
+                # در صورت بروز هرگونه خطا، تمام تغییرات را به حالت اول برگردان
+                conn.rollback()
+                error_message = f"خطا در ثبت وام: '{err}'"
+                print(error_message)
+                return False, error_message
+            finally:
+                # بازگرداندن به حالت پیش‌فرض و بستن اتصال
+                conn.autocommit = True
+                if conn and conn.is_connected():
+                    cursor.close()
+                    conn.close()
+
+    def get_full_customer_report_data(self, customer_id):
+            conn = self.create_connection()
+            if conn is None: return None, {}
+            
+            loans = self.get_customer_loans_for_report(customer_id)
+            if not loans:
+                return [], {}
+
+            installments_by_loan = {}
+            cursor = conn.cursor(dictionary=True)
+            try:
+                loan_ids = [loan['id'] for loan in loans]
+                # ساخت یک placeholder رشته‌ای مانند (%s, %s, %s) متناسب با تعداد وام‌ها
+                format_strings = ','.join(['%s'] * len(loan_ids))
+
+                # خواندن تمام اقساط برای تمام وام‌های مشتری در یک کوئری
+                installments_query = f"""
+                    SELECT id, loan_id, due_date, amount_due, amount_paid, payment_date 
+                    FROM installments WHERE loan_id IN ({format_strings}) ORDER BY id ASC
+                """
+                cursor.execute(installments_query, tuple(loan_ids))
+                all_installments = cursor.fetchall()
+                
+                if not all_installments:
+                    return loans, {}
+
+                # خواندن تمام جزئیات پرداخت برای تمام اقساط در یک کوئری
+                installment_ids = [inst['id'] for inst in all_installments]
+                format_strings = ','.join(['%s'] * len(installment_ids))
+                payments_query = f"""
+                    SELECT installment_id, amount, payment_date, description 
+                    FROM payment_details WHERE installment_id IN ({format_strings}) ORDER BY payment_date ASC
+                """
+                cursor.execute(payments_query, tuple(installment_ids))
+                all_payment_details = cursor.fetchall()
+
+                # دسته‌بندی جزئیات پرداخت‌ها بر اساس ID قسط برای دسترسی سریع
+                payments_dict = {}
+                for payment in all_payment_details:
+                    inst_id = payment['installment_id']
+                    if inst_id not in payments_dict:
+                        payments_dict[inst_id] = []
+                    payments_dict[inst_id].append(payment)
+
+                # دسته‌بندی اقساط بر اساس ID وام و افزودن جزئیات پرداخت به هر قسط
+                for inst in all_installments:
+                    loan_id = inst['loan_id']
+                    if loan_id not in installments_by_loan:
+                        installments_by_loan[loan_id] = []
+                    
+                    # اضافه کردن لیست جزئیات پرداخت (حتی اگر خالی باشد) به هر قسط
+                    inst['payment_details'] = payments_dict.get(inst['id'], [])
+                    installments_by_loan[loan_id].append(inst)
+
+                return loans, installments_by_loan
+
+            except Error as err:
+                print(f"خطا در خواندن اتمیک داده‌های گزارش: {err}")
+                return None, {}
+            finally:
+                if conn and conn.is_connected():
+                    cursor.close()
+                    conn.close()
+
+    def get_installments_by_date_range(self, start_date, end_date, status):
+            conn = self.create_connection()
+            if conn is None: return []
+            
+            # بخش اصلی کوئری
+            query = """
+                SELECT 
+                    i.due_date, i.amount_due, i.amount_paid,
+                    c.name as customer_name,
+                    l.id as loan_id
+                FROM installments i
+                JOIN loans l ON i.loan_id = l.id
+                JOIN customers c ON l.customer_id = c.id
+                WHERE i.due_date BETWEEN %s AND %s
+            """
+            
+            params = [start_date, end_date]
+            
+            # اضافه کردن فیلتر وضعیت به کوئری
+            if status == "پرداخت شده":
+                query += " AND i.is_paid = TRUE"
+            elif status == "پرداخت نشده":
+                query += " AND i.amount_paid = 0"
+            elif status == "پرداخت ناقص":
+                query += " AND i.amount_paid > 0 AND i.is_paid = FALSE"
+                
+            query += " ORDER BY i.due_date ASC"
+            
+            cursor = conn.cursor(dictionary=True)
+            try:
+                cursor.execute(query, tuple(params))
+                return cursor.fetchall()
+            except Error as err:
+                print(f"خطا در گزارش‌گیری اقساط: '{err}'")
+                return []
+            finally:
+                if conn.is_connected(): cursor.close(); conn.close()
+
+
+
+
+
+
+
+

@@ -13,6 +13,9 @@ from loan_panel import LoanPanel
 from installment_panel import InstallmentPanel
 from transaction_panel import TransactionPanel
 from dashboard_panel import DashboardPanel
+from expense_panel import ExpensePanel # <-- این خط را اضافه کنید
+from reporting_panel import ReportingPanel
+
 
 class MainApp(QMainWindow):
     def __init__(self):
@@ -52,14 +55,18 @@ class MainApp(QMainWindow):
         self.loan_panel = LoanPanel()
         self.installment_panel = InstallmentPanel()
         self.transaction_panel = TransactionPanel()
-        
+        self.expense_panel = ExpensePanel() # <-- نمونه‌سازی پنل جدید
+        self.reporting_panel = ReportingPanel()
+
         self.panels = {
             "dashboard": self.dashboard_panel,
             "customers": self.customer_panel,
             "cashboxes": self.cashbox_panel,
             "loans": self.loan_panel,
             "installments": self.installment_panel,
-            "transactions": self.transaction_panel
+            "expenses": self.expense_panel,
+            "transactions": self.transaction_panel,
+            "reporting": self.reporting_panel # <-- ۳. افزودن به دیکشنری
         }
         
         # افزودن پنل‌ها به QStackedWidget
@@ -80,6 +87,8 @@ class MainApp(QMainWindow):
             ("صندوق‌ها", "cashboxes"),
             ("پرداخت وام", "loans"),
             ("پرداخت اقساط", "installments"),
+            ("هزینه‌ها", "expenses"),
+            ("گزارش‌گیری", "reporting"), # <-- ۴. افزودن دکمه جدید
             ("تراکنش‌ها", "transactions"),
         ]
         
