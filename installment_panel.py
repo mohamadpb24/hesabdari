@@ -1,17 +1,17 @@
+# installment_panel.py
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QFormLayout, QComboBox, QLineEdit, QTableWidget,
     QTableWidgetItem, QHeaderView, QMessageBox, QDialog, QAbstractItemView
 )
-from PyQt5.QtGui import QFont, QIcon, QColor
-from PyQt5.QtCore import Qt, QSize
+from PyQt5.QtGui import QFont, QIcon
+from PyQt5.QtCore import Qt
 import jdatetime
 
 from db_manager import DatabaseManager
 from utils import format_money
 
 class InstallmentPanel(QWidget):
-    # ... (بقیه توابع تا show_settlement_dialog بدون تغییر) ...
     def __init__(self):
         super().__init__()
         self.db_manager = DatabaseManager()
@@ -34,15 +34,7 @@ class InstallmentPanel(QWidget):
         customer_layout = QHBoxLayout()
         customer_label = QLabel("انتخاب مشتری:")
         self.customer_combo = QComboBox()
-        self.customer_combo.setStyleSheet("""
-            QComboBox {
-                background-color: white;
-                border: 1px solid #bdc3c7;
-                border-radius: 5px;
-                padding: 5px;
-            }
-        """)
-        self.load_customers_to_combo()
+        self.customer_combo.setStyleSheet("QComboBox { background-color: white; border: 1px solid #bdc3c7; border-radius: 5px; padding: 5px; }")
         self.customer_combo.currentIndexChanged.connect(self.load_customer_loans)
         
         customer_layout.addWidget(customer_label)
@@ -52,29 +44,13 @@ class InstallmentPanel(QWidget):
         loan_layout = QHBoxLayout()
         loan_label = QLabel("انتخاب وام:")
         self.loan_combo = QComboBox()
-        self.loan_combo.setStyleSheet("""
-            QComboBox {
-                background-color: white;
-                border: 1px solid #bdc3c7;
-                border-radius: 5px;
-                padding: 5px;
-            }
-        """)
+        self.loan_combo.setStyleSheet("QComboBox { background-color: white; border: 1px solid #bdc3c7; border-radius: 5px; padding: 5px; }")
         self.loan_combo.currentIndexChanged.connect(self.load_loan_installments)
         
         self.settle_loan_btn = QPushButton("تسویه کامل وام")
         self.settle_loan_btn.setFont(QFont("B Yekan", 11))
         self.settle_loan_btn.setIcon(QIcon.fromTheme("emblem-ok"))
-        self.settle_loan_btn.setStyleSheet("""
-            QPushButton { 
-                background-color: #e67e22; 
-                color: white; 
-                border-radius: 8px; 
-                padding: 10px;
-            }
-            QPushButton:hover { background-color: #d35400; }
-            QPushButton:disabled { background-color: #95a5a6; }
-        """)
+        self.settle_loan_btn.setStyleSheet("QPushButton { background-color: #e67e22; color: white; border-radius: 8px; padding: 10px;} QPushButton:hover { background-color: #d35400; } QPushButton:disabled { background-color: #95a5a6; }")
         self.settle_loan_btn.clicked.connect(self.show_settlement_dialog)
         self.settle_loan_btn.setEnabled(False) 
         
@@ -91,6 +67,8 @@ class InstallmentPanel(QWidget):
         self.installments_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.installments_table.setSelectionMode(QTableWidget.SingleSelection)
         self.main_layout.addWidget(self.installments_table)
+
+        self.refresh_data()
 
     def refresh_data(self):
         self.load_customers_to_combo()
@@ -129,47 +107,40 @@ class InstallmentPanel(QWidget):
                     self.loan_combo.addItem(f"وام به مبلغ {format_money(amount)} ({term} ماهه)", loan_id)
     
     def load_loan_installments(self):
-            self.current_loan_id = self.loan_combo.currentData()
-            self.installments_table.setRowCount(0)
-            
-            if self.current_loan_id:
-                is_fully_paid = self.db_manager.is_loan_fully_paid(self.current_loan_id)
-                self.settle_loan_btn.setEnabled(not is_fully_paid)
+        self.current_loan_id = self.loan_combo.currentData()
+        self.installments_table.setRowCount(0)
+        
+        if self.current_loan_id:
+            is_fully_paid = self.db_manager.is_loan_fully_paid(self.current_loan_id)
+            self.settle_loan_btn.setEnabled(not is_fully_paid)
 
-                installments = self.db_manager.get_loan_installments(self.current_loan_id)
-                for row, installment in enumerate(installments):
-                    # --- این خط اصلاح شد ---
-                    # اکنون ۵ متغیر برای دریافت ۵ مقدار از دیتابیس داریم
-                    installment_id, due_date, amount_due, amount_paid, payment_date = installment
-                    
-                    self.installments_table.insertRow(row)
-                    
-                    remaining_amount = amount_due - amount_paid
-                    if remaining_amount < 0: remaining_amount = 0
+            installments = self.db_manager.get_loan_installments(self.current_loan_id)
+            for row, installment in enumerate(installments):
+                installment_id, due_date, amount_due, amount_paid, payment_date = installment
+                
+                self.installments_table.insertRow(row)
+                
+                remaining_amount = amount_due - amount_paid
+                if remaining_amount < 0: remaining_amount = 0
 
-                    status = "پرداخت نشده"
-                    if amount_paid >= amount_due:
-                        status = "پرداخت شده"
-                    elif amount_paid > 0:
-                        status = "پرداخت ناقص"
-                    
-                    self.installments_table.setItem(row, 0, QTableWidgetItem(due_date))
-                    self.installments_table.setItem(row, 1, QTableWidgetItem(format_money(amount_due)))
-                    self.installments_table.setItem(row, 2, QTableWidgetItem(format_money(remaining_amount)))
-                    self.installments_table.setItem(row, 3, QTableWidgetItem(status))
-                    
-                    if not is_fully_paid and status != "پرداخت شده":
-                        pay_btn = QPushButton("پرداخت قسط")
-                        pay_btn.setStyleSheet("""
-                            QPushButton { 
-                                background-color: #2ecc71; color: white; border-radius: 5px; padding: 5px;
-                            }
-                            QPushButton:hover { background-color: #27ae60; }
-                        """)
-                        pay_btn.clicked.connect(lambda _, inst_id=installment_id, rem_amount=remaining_amount: self.show_pay_dialog(inst_id, rem_amount))
-                        self.installments_table.setCellWidget(row, 4, pay_btn)
-            else:
-                self.settle_loan_btn.setEnabled(False)
+                status = "پرداخت نشده"
+                if amount_paid >= amount_due:
+                    status = "پرداخت شده"
+                elif amount_paid > 0:
+                    status = "پرداخت ناقص"
+                
+                self.installments_table.setItem(row, 0, QTableWidgetItem(due_date))
+                self.installments_table.setItem(row, 1, QTableWidgetItem(format_money(amount_due)))
+                self.installments_table.setItem(row, 2, QTableWidgetItem(format_money(remaining_amount)))
+                self.installments_table.setItem(row, 3, QTableWidgetItem(status))
+                
+                if not is_fully_paid and status != "پرداخت شده":
+                    pay_btn = QPushButton("پرداخت قسط")
+                    pay_btn.setStyleSheet("QPushButton { background-color: #2ecc71; color: white; border-radius: 5px; padding: 5px;} QPushButton:hover { background-color: #27ae60; }")
+                    pay_btn.clicked.connect(lambda _, inst_id=installment_id, rem_amount=remaining_amount: self.show_pay_dialog(inst_id, rem_amount))
+                    self.installments_table.setCellWidget(row, 4, pay_btn)
+        else:
+            self.settle_loan_btn.setEnabled(False)
             
     def show_settlement_dialog(self):
         if not self.current_loan_id:
@@ -183,7 +154,7 @@ class InstallmentPanel(QWidget):
 
         principal = details['amount']
         interest_rate = details['interest_rate']
-        total_paid = details['total_paid']
+        total_paid = details.get('total_paid') or 0
         start_date_str = details['start_date']
         
         start_date = jdatetime.datetime.strptime(start_date_str, '%Y/%m/%d').date()
@@ -204,12 +175,7 @@ class InstallmentPanel(QWidget):
         main_layout = QVBoxLayout(dialog)
         form_layout = QFormLayout()
         
-        style_sheet = """
-            QLabel { font-size: 13px; padding: 5px; }
-            QLabel#title { font-size: 16px; font-weight: bold; color: #2c3e50; }
-            QLabel#final_amount { font-size: 18px; font-weight: bold; color: #c0392b; padding: 10px; background-color: #f9e6e4; border-radius: 5px;}
-            QComboBox, QLineEdit { padding: 8px; border: 1px solid #ccc; border-radius: 5px; }
-        """
+        style_sheet = "QLabel { font-size: 13px; padding: 5px; } QLabel#title { font-size: 16px; font-weight: bold; color: #2c3e50; } QLabel#final_amount { font-size: 18px; font-weight: bold; color: #c0392b; padding: 10px; background-color: #f9e6e4; border-radius: 5px;} QComboBox, QLineEdit { padding: 8px; border: 1px solid #ccc; border-radius: 5px; }"
         dialog.setStyleSheet(style_sheet)
         
         form_layout.addRow(QLabel("جزئیات محاسبه تسویه", objectName="title"))
@@ -234,7 +200,6 @@ class InstallmentPanel(QWidget):
         confirm_btn = QPushButton("تایید و تسویه نهایی")
         confirm_btn.setFont(QFont("B Yekan", 12))
         confirm_btn.setStyleSheet("background-color: #27ae60; color: white; padding: 10px; border-radius: 8px;")
-        # *** ارسال new_total_loan_value به process_settlement ***
         confirm_btn.clicked.connect(lambda: self.process_settlement(dialog, settlement_amount, cashbox_combo.currentData(), description_input.text(), new_total_loan_value))
         
         main_layout.addLayout(form_layout)
@@ -242,27 +207,23 @@ class InstallmentPanel(QWidget):
 
         dialog.exec_()
         
-    # *** این تابع برای ارسال new_total_loan_value اصلاح شد ***
     def process_settlement(self, dialog, amount, cashbox_id, description, new_total_loan_value):
         if not cashbox_id:
             QMessageBox.warning(dialog, "خطا", "لطفا یک صندوق را انتخاب کنید.")
             return
 
-        reply = QMessageBox.question(self, 'تایید تسویه', 
-                                     f"آیا از تسویه کامل این وام با مبلغ {format_money(amount)} مطمئن هستید؟",
-                                     QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        reply = QMessageBox.question(self, 'تایید تسویه', f"آیا از تسویه کامل این وام با مبلغ {format_money(amount)} مطمئن هستید؟", QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
         
         if reply == QMessageBox.Yes:
-            # ارسال new_total_loan_value به db_manager
-            if self.db_manager.settle_loan(self.current_loan_id, amount, cashbox_id, new_total_loan_value):
-                customer_name = self.customer_combo.currentText()
-                trans_desc = f"تسویه وام مشتری {customer_name} - {description}"
-                
-                self.db_manager.record_transaction(
-                    "settlement_received", amount, jdatetime.date.today().strftime('%Y/%m/%d'), 
-                    self.current_customer_id, cashbox_id, trans_desc
-                )
-                
+            today_str = jdatetime.date.today().strftime('%Y/%m/%d')
+            customer_name = self.customer_combo.currentText()
+            trans_desc = f"تسویه وام مشتری {customer_name} - {description}"
+            
+            success = self.db_manager.settle_loan(
+                self.current_loan_id, amount, cashbox_id, new_total_loan_value,
+                self.current_customer_id, trans_desc, today_str
+            )
+            if success:
                 QMessageBox.information(self, "موفقیت", "وام با موفقیت تسویه شد.")
                 dialog.accept()
                 self.load_loan_installments()
@@ -270,144 +231,97 @@ class InstallmentPanel(QWidget):
                 QMessageBox.critical(self, "خطا", "خطا در عملیات تسویه وام.")
 
     def show_pay_dialog(self, installment_id, remaining_amount):
-            dialog = QDialog(self)
-            dialog.setWindowTitle("فرم پرداخت قسط")
-            dialog.setMinimumWidth(450)
+        dialog = QDialog(self)
+        dialog.setWindowTitle("فرم پرداخت قسط")
+        dialog.setMinimumWidth(450)
+        style_sheet = "QDialog { background-color: #f8f9fa; } QLabel { font-size: 13px; padding-top: 5px; } QLabel#title { font-size: 16px; font-weight: bold; color: #343a40; margin-bottom: 10px; } QLabel#remaining_amount { font-size: 15px; font-weight: bold; color: #c0392b; padding: 10px; background-color: #f9e6e4; border-radius: 8px;} QLineEdit, QComboBox { padding: 10px; border: 1px solid #ced4da; border-radius: 8px; background-color: #ffffff; } QPushButton { font-size: 12px; font-weight: bold; padding: 10px 20px; border-radius: 8px; background-color: #28a745; color: white;} QPushButton:hover { background-color: #218838; }"
+        dialog.setStyleSheet(style_sheet)
 
-            # استایل‌شیت برای ظاهر زیبا و خوانا
-            style_sheet = """
-                QDialog { background-color: #f8f9fa; }
-                QLabel { font-size: 13px; padding-top: 5px; }
-                QLabel#title { font-size: 16px; font-weight: bold; color: #343a40; margin-bottom: 10px; }
-                QLabel#remaining_amount { 
-                    font-size: 15px; font-weight: bold; color: #c0392b;
-                    padding: 10px; background-color: #f9e6e4; border-radius: 8px;
-                }
-                QLineEdit, QComboBox { 
-                    padding: 10px; border: 1px solid #ced4da; 
-                    border-radius: 8px; background-color: #ffffff; 
-                }
-                QPushButton { 
-                    font-size: 12px; font-weight: bold; padding: 10px 20px; 
-                    border-radius: 8px; background-color: #28a745; color: white;
-                }
-                QPushButton:hover { background-color: #218838; }
-            """
-            dialog.setStyleSheet(style_sheet)
+        main_layout = QVBoxLayout(dialog)
+        main_layout.setSpacing(15)
+        form_layout = QFormLayout()
+        form_layout.setRowWrapPolicy(QFormLayout.WrapAllRows)
+        form_layout.setLabelAlignment(Qt.AlignLeft)
 
-            # تعریف لایه‌های اصلی
-            main_layout = QVBoxLayout(dialog)
-            main_layout.setSpacing(15)
-            form_layout = QFormLayout()
-            form_layout.setRowWrapPolicy(QFormLayout.WrapAllRows)
-            form_layout.setLabelAlignment(Qt.AlignLeft)
+        title_label = QLabel("جزئیات پرداخت قسط", objectName="title")
+        title_label.setAlignment(Qt.AlignCenter)
+        main_layout.addWidget(title_label)
 
-            # عنوان دیالوگ
-            title_label = QLabel("جزئیات پرداخت قسط", objectName="title")
-            title_label.setAlignment(Qt.AlignCenter)
-            main_layout.addWidget(title_label)
+        installment_details = self.db_manager.get_installment_details(installment_id)
+        if installment_details:
+            due_date, amount_due = installment_details[1], installment_details[2]
+            form_layout.addRow(QLabel("تاریخ سررسید قسط:"), QLabel(f"<b>{due_date}</b>"))
+            form_layout.addRow(QLabel("مبلغ کل قسط:"), QLabel(f"<b>{format_money(amount_due)}</b>"))
 
-            # نمایش اطلاعات قسط
-            installment_details = self.db_manager.get_installment_details(installment_id)
-            if installment_details:
-                due_date = installment_details[1]
-                amount_due = installment_details[2]
-                form_layout.addRow(QLabel("تاریخ سررسید قسط:"), QLabel(f"<b>{due_date}</b>"))
-                form_layout.addRow(QLabel("مبلغ کل قسط:"), QLabel(f"<b>{format_money(amount_due)}</b>"))
+        remaining_label = QLabel(f"<b>{format_money(remaining_amount)}</b>", objectName="remaining_amount")
+        remaining_label.setAlignment(Qt.AlignCenter)
+        form_layout.addRow(QLabel("مانده قابل پرداخت:"), remaining_label)
+        
+        amount_input = QLineEdit(str(int(remaining_amount)))
+        form_layout.addRow("مبلغ پرداخت:", amount_input)
 
-            remaining_label = QLabel(f"<b>{format_money(remaining_amount)}</b>", objectName="remaining_amount")
-            remaining_label.setAlignment(Qt.AlignCenter)
-            form_layout.addRow(QLabel("مانده قابل پرداخت:"), remaining_label)
-            
-            # فیلدهای ورودی
-            amount_input = QLineEdit(str(int(remaining_amount)))
-            amount_input.textChanged.connect(lambda text, input=amount_input: self.format_amount_input(text, input))
-            form_layout.addRow("مبلغ پرداخت:", amount_input)
+        cashbox_combo = QComboBox()
+        cashboxes = self.db_manager.get_all_cash_boxes()
+        for box_id, name, balance in cashboxes:
+            cashbox_combo.addItem(f"{name} ({format_money(balance)})", box_id)
+        form_layout.addRow("واریز به صندوق:", cashbox_combo)
+        
+        description_input = QLineEdit()
+        description_input.setPlaceholderText("اختیاری (مثال: پرداخت توسط همراه)")
+        form_layout.addRow("شرح:", description_input)
 
-            cashbox_combo = QComboBox()
-            cashboxes = self.db_manager.get_all_cash_boxes()
-            for box_id, name, balance in cashboxes:
-                cashbox_combo.addItem(f"{name} ({format_money(balance)})", box_id)
-            form_layout.addRow("واریز به صندوق:", cashbox_combo)
-            
-            description_input = QLineEdit()
-            description_input.setPlaceholderText("اختیاری (مثال: پرداخت توسط همراه)")
-            form_layout.addRow("شرح:", description_input)
+        payment_date_input = QLineEdit(jdatetime.date.today().strftime('%Y/%m/%d'))
+        form_layout.addRow("تاریخ پرداخت:", payment_date_input)
 
-            self.payment_date_input = QLineEdit(jdatetime.date.today().strftime('%Y/%m/%d'))
-            form_layout.addRow("تاریخ پرداخت:", self.payment_date_input)
-
-            # دکمه ثبت پرداخت
-            pay_btn = QPushButton("ثبت پرداخت")
-            pay_btn.setIcon(QIcon.fromTheme("emblem-ok"))
-            pay_btn.clicked.connect(lambda: self.process_payment(dialog, installment_id, amount_input.text(), cashbox_combo.currentData(), description_input.text(), self.payment_date_input.text()))
-            
-            # اضافه کردن لایه‌ها و ویجت‌ها به دیالوگ
-            main_layout.addLayout(form_layout)
-            main_layout.addWidget(pay_btn, alignment=Qt.AlignCenter)
-            
-            dialog.exec_()
+        pay_btn = QPushButton("ثبت پرداخت")
+        pay_btn.setIcon(QIcon.fromTheme("emblem-ok"))
+        pay_btn.clicked.connect(lambda: self.process_payment(
+            dialog, installment_id, amount_input.text(), 
+            cashbox_combo.currentData(), description_input.text(), 
+            payment_date_input.text()
+        ))
+        
+        main_layout.addLayout(form_layout)
+        main_layout.addWidget(pay_btn, alignment=Qt.AlignCenter)
+        
+        dialog.exec_()
     
-    def format_amount_input(self, text, input_widget):
-        try:
-            plain_text = text.replace("،", "").replace("تومان", "").strip()
-            if not plain_text: return
-            if not plain_text.isdigit():
-                valid_chars = [c for c in plain_text if c.isdigit()]
-                plain_text = "".join(valid_chars) if valid_chars else ""
-
-            formatted_text = f"{int(plain_text):,}".replace(",", "،")
-            
-            if input_widget.text() != formatted_text:
-                input_widget.setText(formatted_text)
-        except (ValueError, TypeError):
-            input_widget.setText("")
-
     def process_payment(self, dialog, installment_id, amount_str, cashbox_id, description, payment_date):
-            amount_str = amount_str.replace("،", "").replace("تومان", "").strip()
-            try:
-                amount = int(amount_str)
-            except (ValueError, TypeError):
-                QMessageBox.warning(dialog, "خطا", "لطفا مبلغ معتبر وارد کنید.")
-                return
+        try:
+            jdatetime.datetime.strptime(payment_date, '%Y/%m/%d')
+        except ValueError:
+            QMessageBox.warning(dialog, "خطا", "فرمت تاریخ پرداخت صحیح نیست. لطفا از فرمت YYYY/MM/DD استفاده کنید.")
+            return
 
-            if amount <= 0:
-                QMessageBox.warning(dialog, "خطا", "مبلغ پرداخت باید بیشتر از صفر باشد.")
-                return
+        amount_str = amount_str.replace("،", "").replace("تومان", "").strip()
+        try:
+            amount = int(amount_str)
+        except (ValueError, TypeError):
+            QMessageBox.warning(dialog, "خطا", "لطفا مبلغ معتبر وارد کنید.")
+            return
 
-            installment_details = self.db_manager.get_installment_details(installment_id)
-            if installment_details and amount > (installment_details[2] - installment_details[3]):
-                QMessageBox.warning(dialog, "خطا", "مبلغ پرداخت بیشتر از مانده قسط است.")
-                return
+        if amount <= 0:
+            QMessageBox.warning(dialog, "خطا", "مبلغ پرداخت باید بیشتر از صفر باشد.")
+            return
 
-            # ارسال تاریخ پرداخت به تابع دیتابیس
-            if self.db_manager.pay_installment(installment_id, amount, cashbox_id, description, payment_date):
-                QMessageBox.information(self, "موفقیت", "قسط با موفقیت پرداخت شد.")
-                dialog.accept()
-                self.load_loan_installments()
-                
-                customer_name = self.customer_combo.currentText()
-                
-                transaction_description = f"دریافت قسط از مشتری {customer_name}"
-                if description:
-                    transaction_description += f" - {description}"
-                
-                # ثبت تراکنش با تاریخ پرداخت صحیح
-                self.db_manager.record_transaction(
-                    "installment_received", amount, 
-                    payment_date, 
-                    self.current_customer_id, cashbox_id, transaction_description
-                )
-            else:
-                QMessageBox.critical(self, "خطا", "خطا در پرداخت قسط. لطفا دوباره تلاش کنید.")
+        installment_details = self.db_manager.get_installment_details(installment_id)
+        if installment_details and amount > (installment_details[2] - installment_details[3]):
+            QMessageBox.warning(dialog, "خطا", "مبلغ پرداخت بیشتر از مانده قسط است.")
+            return
 
+        customer_name = self.customer_combo.currentText()
+        transaction_description = f"دریافت قسط از مشتری {customer_name}"
+        if description:
+            transaction_description += f" - {description}"
+        
+        success = self.db_manager.pay_installment(
+            self.current_customer_id, installment_id, amount, 
+            cashbox_id, transaction_description, payment_date
+        )
 
-
-
-
-
-
-
-
-
-                
+        if success:
+            QMessageBox.information(self, "موفقیت", "قسط با موفقیت پرداخت شد.")
+            dialog.accept()
+            self.load_loan_installments()
+        else:
+            QMessageBox.critical(self, "خطا", "خطا در پرداخت قسط. لطفا دوباره تلاش کنید.")

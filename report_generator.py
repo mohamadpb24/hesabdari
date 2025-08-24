@@ -9,6 +9,7 @@ from reportlab.lib.units import cm
 from reportlab.lib.enums import TA_RIGHT, TA_CENTER, TA_LEFT
 from bidi.algorithm import get_display
 import arabic_reshaper
+from typing import Iterator, Dict, Any , List
 
 # --- توابع کمکی ---
 def format_money_for_report(value):
@@ -72,7 +73,7 @@ def get_report_styles():
     }
     return styles
 # --- تابع ساخت گزارش لیست مشتریان (اصلاح شده) ---
-def create_customers_report(customers_data, file_path):
+def create_customers_report(customers_iterator: Iterator[Dict[str, Any]], file_path: str) -> bool:
     try:
         doc = SimpleDocTemplate(file_path, pagesize=landscape(letter))
         elements = []
@@ -90,9 +91,11 @@ def create_customers_report(customers_data, file_path):
         elements.append(Spacer(1, 15))
 
         header = [prepare_persian_text(h) for h in ["نام و نام خانوادگی", "کد ملی", "شماره تماس", "آدرس", "میزان بدهی (تومان)"]]
+        
+        # کلیدی‌ترین تغییر: به جای لیست، روی iterator حلقه می‌زنیم
+        # و داده‌ها را به صورت تکه‌تکه به data اضافه می‌کنیم
         data = [header]
-
-        for customer in customers_data:
+        for customer in customers_iterator:
             row = [
                 prepare_persian_text(customer['name']),
                 prepare_persian_text(customer['national_code']),
@@ -102,7 +105,7 @@ def create_customers_report(customers_data, file_path):
             ]
             data.append(row)
 
-        table = Table(data, colWidths=[150, 100, 100, 250, 120])
+        table = Table(data, colWidths=[150, 100, 100, 250, 120], repeatRows=1)
         style = TableStyle([
             ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#4a5568')),
             ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
@@ -110,6 +113,7 @@ def create_customers_report(customers_data, file_path):
             ('FONTNAME', (0, 0), (-1, 0), 'Vazir-Bold'),
             ('FONTNAME', (0, 1), (-1, -1), 'Vazir'),
             ('GRID', (0, 0), (-1, -1), 1, colors.black),
+            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.whitesmoke, colors.HexColor('#f2f2f2')])
         ])
         table.setStyle(style)
 
@@ -122,10 +126,9 @@ def create_customers_report(customers_data, file_path):
 
 
 # --- تابع ساخت گزارش پرونده مشتری (اصلاح شده) ---
-def create_single_customer_report(customer_data, loans, installments_by_loan, file_path, selected_loan_id=None):
+def create_single_customer_report(customer_data: Dict, loans: List, installments_by_loan: Dict, file_path: str, selected_loan_id=None):
     try:
         doc = SimpleDocTemplate(file_path, pagesize=letter)
-        doc.addPageTemplates([BaseReportTemplate('main_page', doc)])
         elements = []
         styles = get_report_styles()
         
@@ -177,8 +180,9 @@ def create_single_customer_report(customer_data, loans, installments_by_loan, fi
                         current_row_idx = len(data) - 1
                         table_styles.append(('BACKGROUND', (0, current_row_idx), (-1, current_row_idx), colors.HexColor('#f4f6f7') if i % 2 == 0 else colors.white))
                         
+                        # --- بخش جدید: نمایش جزئیات پرداخت ---
                         payment_details = inst.get('payment_details', [])
-                        if len(payment_details) > 1:
+                        if payment_details and (len(payment_details) > 1 or (inst['amount_paid'] > 0 and inst['amount_paid'] < inst['amount_due'])):
                             for payment in payment_details:
                                 sub_row_text = f"پرداخت در تاریخ {payment['payment_date']} به مبلغ {format_money_for_report(payment['amount'])}"
                                 if payment.get('description'):
@@ -192,8 +196,7 @@ def create_single_customer_report(customer_data, loans, installments_by_loan, fi
                                 table_styles.append(('BACKGROUND', (0, sub_row_idx), (-1, sub_row_idx), colors.HexColor('#f8f9fa')))
                                 table_styles.append(('GRID', (0, current_row_idx), (-1, sub_row_idx), 1, colors.darkgrey))
 
-
-                    table = Table(data, colWidths=[30, 70, 70, 85, 85, 85, 60])
+                    table = Table(data, colWidths=[30, 70, 70, 85, 85, 85, 60], repeatRows=1)
                     table.setStyle(TableStyle(table_styles))
                     elements.append(table)
                     elements.append(Spacer(1, 0.5*cm))

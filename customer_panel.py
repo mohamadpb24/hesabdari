@@ -1,10 +1,11 @@
+# customer_panel.py
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QLineEdit, QFormLayout, QTableWidget, QTableWidgetItem,
     QHeaderView, QMessageBox, QDialog, QAbstractItemView, QFileDialog
 )
 from PyQt5.QtGui import QFont, QIcon, QColor
-from PyQt5.QtCore import Qt, QSize
+from PyQt5.QtCore import Qt, QSize, QTimer
 
 from db_manager import DatabaseManager
 from utils import format_money
@@ -17,6 +18,17 @@ class CustomerPanel(QWidget):
         self.main_layout = QVBoxLayout(self)
         self.main_layout.setAlignment(Qt.AlignTop)
         self.main_layout.setContentsMargins(20, 15, 20, 15)
+        
+        # --- متغیرهای مربوط به صفحه‌بندی ---
+        self.current_page = 1
+        self.page_size = 50
+        self.total_customers = 0
+        
+        # --- تایمر برای تاخیر در جستجو ---
+        self.search_timer = QTimer()
+        self.search_timer.setSingleShot(True)
+        self.search_timer.timeout.connect(self.search_customers)
+        
         self.build_ui()
 
     def build_ui(self):
@@ -31,25 +43,13 @@ class CustomerPanel(QWidget):
         print_btn = QPushButton("چاپ گزارش")
         print_btn.setFont(QFont("B Yekan", 11))
         print_btn.setIcon(QIcon.fromTheme("document-print"))
-        print_btn.setStyleSheet("""
-            QPushButton { 
-                background-color: #3498db; color: white; 
-                border: none; border-radius: 8px; padding: 10px 15px;
-            }
-            QPushButton:hover { background-color: #2980b9; }
-        """)
+        print_btn.setStyleSheet("QPushButton { background-color: #3498db; color: white; border: none; border-radius: 8px; padding: 10px 15px;} QPushButton:hover { background-color: #2980b9; }")
         print_btn.clicked.connect(self.print_customers_list)
 
         add_customer_btn = QPushButton("افزودن مشتری")
         add_customer_btn.setFont(QFont("B Yekan", 11))
         add_customer_btn.setIcon(QIcon.fromTheme("list-add"))
-        add_customer_btn.setStyleSheet("""
-            QPushButton { 
-                background-color: #27ae60; color: white; 
-                border: none; border-radius: 8px; padding: 10px 15px;
-            }
-            QPushButton:hover { background-color: #229954; }
-        """)
+        add_customer_btn.setStyleSheet("QPushButton { background-color: #27ae60; color: white; border: none; border-radius: 8px; padding: 10px 15px;} QPushButton:hover { background-color: #229954; }")
         add_customer_btn.clicked.connect(lambda: self.show_add_customer_form())
         
         header_layout.addWidget(title_label)
@@ -60,13 +60,8 @@ class CustomerPanel(QWidget):
         self.search_input = QLineEdit()
         self.search_input.setPlaceholderText("جستجو بر اساس نام، کد ملی یا شماره تماس...")
         self.search_input.setFont(QFont("B Yekan", 10))
-        self.search_input.setStyleSheet("""
-            QLineEdit { 
-                background-color: white; border: 1px solid #dcdcdc;
-                border-radius: 8px; padding: 10px; margin-top: 10px;
-            }
-        """)
-        self.search_input.textChanged.connect(self.search_customers)
+        self.search_input.setStyleSheet("QLineEdit { background-color: white; border: 1px solid #dcdcdc; border-radius: 8px; padding: 10px; margin-top: 10px;}")
+        self.search_input.textChanged.connect(lambda: self.search_timer.start(500))
         
         self.customers_table = QTableWidget()
         self.customers_table.setColumnCount(6)
@@ -77,36 +72,29 @@ class CustomerPanel(QWidget):
         header.setSectionResizeMode(3, QHeaderView.ResizeToContents)
         header.setSectionResizeMode(5, QHeaderView.Fixed)
         self.customers_table.setColumnWidth(5, 130)
-
         self.customers_table.setAlternatingRowColors(True)
         self.customers_table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.customers_table.setStyleSheet("""
-            QTableWidget { border: none; }
-            QHeaderView::section { background-color: #f2f2f2; padding: 5px; border: none; font-weight: bold; }
-            QTableWidget::item { padding: 5px; }
-            QTableWidget::item:selected { background-color: #e0e0e0; color: black; }
-        """)
+        self.customers_table.setStyleSheet("QTableWidget { border: none; } QHeaderView::section { background-color: #f2f2f2; padding: 5px; border: none; font-weight: bold; } QTableWidget::item { padding: 5px; } QTableWidget::item:selected { background-color: #e0e0e0; color: black; }")
+        
+        pagination_layout = QHBoxLayout()
+        self.prev_page_btn = QPushButton("صفحه قبل")
+        self.prev_page_btn.clicked.connect(self.prev_page)
+        self.page_label = QLabel("صفحه ۱ از ۱")
+        self.next_page_btn = QPushButton("صفحه بعد")
+        self.next_page_btn.clicked.connect(self.next_page)
+        
+        pagination_layout.addStretch()
+        pagination_layout.addWidget(self.prev_page_btn)
+        pagination_layout.addWidget(self.page_label)
+        pagination_layout.addWidget(self.next_page_btn)
+        pagination_layout.addStretch()
 
         self.main_layout.addLayout(header_layout)
         self.main_layout.addWidget(self.search_input)
         self.main_layout.addWidget(self.customers_table)
+        self.main_layout.addLayout(pagination_layout)
         
-        self.load_customers()
-
-    def print_customers_list(self):
-        customers = self.db_manager.get_customers_with_debt()
-        if not customers:
-            QMessageBox.warning(self, "خطا", "مشتری برای گزارش‌گیری وجود ندارد.")
-            return
-
-        file_path, _ = QFileDialog.getSaveFileName(self, "ذخیره گزارش مشتریان", "", "PDF Files (*.pdf)")
-
-        if file_path:
-            success = report_generator.create_customers_report(customers, file_path)
-            if success:
-                QMessageBox.information(self, "موفقیت", f"گزارش با موفقیت در مسیر زیر ذخیره شد:\n{file_path}")
-            else:
-                QMessageBox.critical(self, "خطا", "خطا در ساخت گزارش PDF.")
+        self.refresh_data()
 
     def clear_layout(self, layout):
         if layout is not None:
@@ -119,26 +107,100 @@ class CustomerPanel(QWidget):
 
     def refresh_data(self):
         self.search_input.clear()
+        self.current_page = 1
         self.load_customers()
+
+    def load_customers(self):
+        search_query = self.search_input.text()
+        self.total_customers = self.db_manager.get_customers_count(search_query)
+        customers = self.db_manager.get_customers_paginated(self.current_page, self.page_size, search_query)
+            
+        self.customers_table.setRowCount(0)
+        
+        for row, customer in enumerate(customers):
+            self.customers_table.insertRow(row)
+            
+            self.customers_table.setItem(row, 0, QTableWidgetItem(customer['name']))
+            self.customers_table.setItem(row, 1, QTableWidgetItem(customer['national_code']))
+            self.customers_table.setItem(row, 2, QTableWidgetItem(customer['phone_number']))
+            self.customers_table.setItem(row, 3, QTableWidgetItem(customer['address']))
+            
+            debt_item = QTableWidgetItem(format_money(customer['total_debt']))
+            if customer['total_debt'] > 0:
+                debt_item.setForeground(QColor("#c0392b"))
+                debt_item.setFont(QFont("B Yekan", 10, QFont.Bold))
+            self.customers_table.setItem(row, 4, debt_item)
+                
+            ops_widget = QWidget()
+            ops_layout = QHBoxLayout(ops_widget)
+            ops_layout.setContentsMargins(0, 0, 0, 0)
+            ops_layout.setSpacing(5)
+
+            trans_btn = QPushButton("تراکنش‌ها")
+            trans_btn.setStyleSheet("background-color: #3498db; color: white; border-radius: 4px; padding: 4px;")
+            trans_btn.clicked.connect(lambda _, c=customer: self.show_customer_transactions_dialog(c))
+            
+            edit_btn = QPushButton("ویرایش")
+            edit_btn.setStyleSheet("background-color: #f1c40f; color: white; border-radius: 4px; padding: 4px;")
+            edit_btn.clicked.connect(lambda _, c=customer: self.show_add_customer_form(c))
+            
+            delete_btn = QPushButton("حذف")
+            delete_btn.setStyleSheet("background-color: #e74c3c; color: white; border-radius: 4px; padding: 4px;")
+            delete_btn.clicked.connect(lambda _, c_id=customer['id']: self.delete_customer_confirmation(c_id))
+            
+            ops_layout.addWidget(trans_btn)
+            ops_layout.addWidget(edit_btn)
+            ops_layout.addWidget(delete_btn)
+            
+            self.customers_table.setCellWidget(row, 5, ops_widget)
+            
+        self.update_pagination_controls()
+
+    def search_customers(self):
+        self.current_page = 1
+        self.load_customers()
+
+    def update_pagination_controls(self):
+        total_pages = (self.total_customers + self.page_size - 1) // self.page_size
+        if total_pages == 0: total_pages = 1
+        
+        self.page_label.setText(f"صفحه {self.current_page} از {total_pages}")
+        self.prev_page_btn.setEnabled(self.current_page > 1)
+        self.next_page_btn.setEnabled(self.current_page < total_pages)
+
+    def prev_page(self):
+        if self.current_page > 1:
+            self.current_page -= 1
+            self.load_customers()
+
+    def next_page(self):
+        total_pages = (self.total_customers + self.page_size - 1) // self.page_size
+        if self.current_page < total_pages:
+            self.current_page += 1
+            self.load_customers()
+    
+    def print_customers_list(self):
+        file_path, _ = QFileDialog.getSaveFileName(self, "ذخیره گزارش مشتریان", "گزارش_مشتریان.pdf", "PDF Files (*.pdf)")
+
+        if file_path:
+            try:
+                customers_iterator = self.db_manager.get_all_customers_with_debt_yield()
+                success = report_generator.create_customers_report(customers_iterator, file_path)
+                if success:
+                    QMessageBox.information(self, "موفقیت", f"گزارش با موفقیت در مسیر زیر ذخیره شد:\n{file_path}")
+                else:
+                    QMessageBox.critical(self, "خطا", "خطا در ساخت گزارش PDF.")
+            except Exception as e:
+                QMessageBox.critical(self, "خطا", f"خطای پیش‌بینی نشده در تولید گزارش: {e}")
+
+    # --- متدهای اضافه شده برای رفع خطا ---
     
     def show_add_customer_form(self, customer_data=None):
         dialog = QDialog(self)
         dialog.setMinimumWidth(450)
         title_text = "فرم ثبت مشتری جدید" if customer_data is None else "فرم ویرایش مشتری"
         dialog.setWindowTitle(title_text)
-
-        dialog.setStyleSheet("""
-            QDialog { background-color: #f8f9fa; }
-            QLabel { font-size: 12px; }
-            QLineEdit { 
-                padding: 10px; border: 1px solid #ced4da; 
-                border-radius: 8px; background-color: #ffffff; 
-            }
-            QPushButton { 
-                font-size: 12px; font-weight: bold;
-                padding: 10px 20px; border-radius: 8px;
-            }
-        """)
+        dialog.setStyleSheet("QDialog { background-color: #f8f9fa; } QLabel { font-size: 12px; } QLineEdit { padding: 10px; border: 1px solid #ced4da; border-radius: 8px; background-color: #ffffff; } QPushButton { font-size: 12px; font-weight: bold; padding: 10px 20px; border-radius: 8px;}")
 
         layout = QVBoxLayout(dialog)
         layout.setSpacing(15)
@@ -227,9 +289,7 @@ class CustomerPanel(QWidget):
             QMessageBox.critical(self, "خطا", "خطا در ویرایش مشتری.")
 
     def delete_customer_confirmation(self, customer_id):
-        reply = QMessageBox.question(self, "حذف مشتری", 
-                                     "آیا از حذف این مشتری مطمئن هستید؟",
-                                     QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        reply = QMessageBox.question(self, "حذف مشتری", "آیا از حذف این مشتری مطمئن هستید؟", QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
         if reply == QMessageBox.Yes:
             if self.db_manager.delete_customer(customer_id):
                 QMessageBox.information(self, "موفقیت", "مشتری با موفقیت حذف شد.")
@@ -237,59 +297,9 @@ class CustomerPanel(QWidget):
             else:
                 QMessageBox.critical(self, "خطا", "خطا در حذف مشتری.")
     
-    def load_customers(self, customer_list=None):
-        if customer_list is None:
-            customers = self.db_manager.get_customers_with_debt()
-        else:
-            customers = customer_list
-            
-        self.customers_table.setRowCount(0)
-        
-        for row, customer in enumerate(customers):
-            self.customers_table.insertRow(row)
-            
-            self.customers_table.setItem(row, 0, QTableWidgetItem(customer['name']))
-            self.customers_table.setItem(row, 1, QTableWidgetItem(customer['national_code']))
-            self.customers_table.setItem(row, 2, QTableWidgetItem(customer['phone_number']))
-            self.customers_table.setItem(row, 3, QTableWidgetItem(customer['address']))
-            
-            debt_item = QTableWidgetItem(format_money(customer['total_debt']))
-            if customer['total_debt'] > 0:
-                debt_item.setForeground(QColor("#c0392b"))
-                debt_item.setFont(QFont("B Yekan", 10, QFont.Bold))
-            self.customers_table.setItem(row, 4, debt_item)
-                
-            ops_widget = QWidget()
-            ops_layout = QHBoxLayout(ops_widget)
-            ops_layout.setContentsMargins(0, 0, 0, 0)
-            ops_layout.setSpacing(5)
-
-            trans_btn = QPushButton("تراکنش‌ها")
-            trans_btn.setStyleSheet("background-color: #3498db; color: white; border-radius: 4px; padding: 4px;")
-            trans_btn.clicked.connect(lambda _, c=customer: self.show_customer_transactions_dialog(c))
-            
-            edit_btn = QPushButton("ویرایش")
-            edit_btn.setStyleSheet("background-color: #f1c40f; color: white; border-radius: 4px; padding: 4px;")
-            edit_btn.clicked.connect(lambda _, c=customer: self.show_add_customer_form(c))
-            
-            delete_btn = QPushButton("حذف")
-            delete_btn.setStyleSheet("background-color: #e74c3c; color: white; border-radius: 4px; padding: 4px;")
-            delete_btn.clicked.connect(lambda _, c_id=customer['id']: self.delete_customer_confirmation(c_id))
-            
-            ops_layout.addWidget(trans_btn)
-            ops_layout.addWidget(edit_btn)
-            ops_layout.addWidget(delete_btn)
-            
-            self.customers_table.setCellWidget(row, 5, ops_widget)
-            
-    def search_customers(self, query_str):
-        if query_str:
-            results = self.db_manager.search_customers(query_str)
-            self.load_customers(results)
-        else:
-            self.load_customers()
-
     def show_customer_transactions_dialog(self, customer_data):
+        # این تابع به db_manager جدید وابسته نیست و می‌تواند بدون تغییر باقی بماند
+        # (فرض بر این است که db_manager همچنان متدی به نام get_transactions_by_customer دارد)
         dialog = QDialog(self)
         dialog.setWindowTitle(f"تراکنش‌های مشتری: {customer_data['name']}")
         dialog.setGeometry(250, 250, 700, 500)
@@ -300,6 +310,7 @@ class CustomerPanel(QWidget):
         table.setHorizontalHeaderLabels(["تاریخ", "نوع تراکنش", "مبلغ", "شرح"])
         table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         
+        # این متد باید در db_manager وجود داشته باشد
         transactions = self.db_manager.get_transactions_by_customer(customer_data['id'])
         table.setRowCount(len(transactions))
         
@@ -323,38 +334,5 @@ class CustomerPanel(QWidget):
             table.setItem(row, 2, amount_item)
             table.setItem(row, 3, QTableWidgetItem(trans['description']))
         
-        print_record_btn = QPushButton("چاپ پرونده مشتری")
-        print_record_btn.setFont(QFont("B Yekan", 11))
-        print_record_btn.setIcon(QIcon.fromTheme("document-print"))
-        print_record_btn.clicked.connect(lambda: self.print_single_customer_report(customer_data))
-
         layout.addWidget(table)
-        layout.addWidget(print_record_btn)
         dialog.exec_()
-
-    def print_single_customer_report(self, customer_data):
-        # فراخوانی تابع جدید برای دریافت تمام اطلاعات با یک اتصال
-        loans, installments_by_loan = self.db_manager.get_full_customer_report_data(customer_data['id'])
-        
-        if loans is None:
-            QMessageBox.critical(self, "خطا", "خطا در دریافت اطلاعات از پایگاه داده.")
-            return
-
-        file_path, _ = QFileDialog.getSaveFileName(self, "ذخیره پرونده مشتری", f"پرونده_{customer_data['name']}.pdf", "PDF Files (*.pdf)")
-
-        if file_path:
-            success = report_generator.create_single_customer_report(customer_data, loans, installments_by_loan, file_path)
-            if success:
-                QMessageBox.information(self, "موفقیت", "پرونده مشتری با موفقیت ذخیره شد.")
-            else:
-                QMessageBox.critical(self, "خطا", "خطا در ساخت گزارش PDF.")
-
-
-
-
-
-
-
-
-
-
