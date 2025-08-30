@@ -7,7 +7,6 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtGui import QFont
 from PyQt5.QtCore import Qt
 
-# Import all panels
 from customer_panel import CustomerPanel
 from cashbox_panel import CashboxPanel
 from loan_panel import LoanPanel
@@ -19,7 +18,6 @@ from reporting_panel import ReportingPanel
 from manual_transaction_panel import ManualTransactionPanel
 from db_manager import DatabaseManager
 
-# --- استایل شیت جامع برای تم روشن ملایم ---
 LIGHT_THEME_STYLESHEET = """
 QWidget {
     background-color: #f0f2f5; /* پس‌زمینه اصلی برنامه */

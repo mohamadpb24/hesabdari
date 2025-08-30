@@ -1,15 +1,16 @@
-# installment_panel.py
+# installment_panel.py (نسخه بازنویسی شده)
+
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QFormLayout, QComboBox, QLineEdit, QTableWidget,
     QTableWidgetItem, QHeaderView, QMessageBox, QDialog, QAbstractItemView
 )
-from PyQt5.QtGui import QFont, QIcon
+from PyQt5.QtGui import QFont, QIcon, QColor
 from PyQt5.QtCore import Qt
 import jdatetime
 
 from db_manager import DatabaseManager
-from utils import format_money
+from utils import format_money, add_months_jalali
 
 class InstallmentPanel(QWidget):
     def __init__(self):
@@ -21,98 +22,132 @@ class InstallmentPanel(QWidget):
         self.current_customer_id = None
         self.current_loan_id = None
         
+        # --- مرحله ۱: ساخت تمام ویجت‌ها فقط یک بار ---
+        self._create_widgets()
+        # --- مرحله ۲: اتصال سیگنال‌ها فقط یک بار ---
+        self._connect_signals()
+        # --- مرحله ۳: چیدمان ویجت‌ها در لایه ---
         self.build_ui()
 
-    def build_ui(self):
-        self.clear_layout(self.main_layout)
+    def _create_widgets(self):
+        """تمام ویجت‌های پنل در این تابع فقط یک بار ساخته می‌شوند."""
+        self.title_label = QLabel("پنل پرداخت اقساط")
+        self.title_label.setFont(QFont("B Yekan", 16, QFont.Bold))
+        self.title_label.setAlignment(Qt.AlignCenter)
 
-        title_label = QLabel("پنل پرداخت اقساط")
-        title_label.setFont(QFont("B Yekan", 16, QFont.Bold))
-        title_label.setAlignment(Qt.AlignCenter)
-        self.main_layout.addWidget(title_label)
-        
-        customer_layout = QHBoxLayout()
-        customer_label = QLabel("انتخاب مشتری:")
+        self.customer_label = QLabel("انتخاب مشتری:")
         self.customer_combo = QComboBox()
         self.customer_combo.setStyleSheet("QComboBox { background-color: white; border: 1px solid #bdc3c7; border-radius: 5px; padding: 5px; }")
-        self.customer_combo.currentIndexChanged.connect(self.load_customer_loans)
-        
-        customer_layout.addWidget(customer_label)
-        customer_layout.addWidget(self.customer_combo)
-        self.main_layout.addLayout(customer_layout)
 
-        loan_layout = QHBoxLayout()
-        loan_label = QLabel("انتخاب وام:")
+        self.loan_label = QLabel("انتخاب وام:")
         self.loan_combo = QComboBox()
         self.loan_combo.setStyleSheet("QComboBox { background-color: white; border: 1px solid #bdc3c7; border-radius: 5px; padding: 5px; }")
-        self.loan_combo.currentIndexChanged.connect(self.load_loan_installments)
-        
+
         self.settle_loan_btn = QPushButton("تسویه کامل وام")
         self.settle_loan_btn.setFont(QFont("B Yekan", 11))
         self.settle_loan_btn.setIcon(QIcon.fromTheme("emblem-ok"))
         self.settle_loan_btn.setStyleSheet("QPushButton { background-color: #e67e22; color: white; border-radius: 8px; padding: 10px;} QPushButton:hover { background-color: #d35400; } QPushButton:disabled { background-color: #95a5a6; }")
-        self.settle_loan_btn.clicked.connect(self.show_settlement_dialog)
-        self.settle_loan_btn.setEnabled(False) 
         
-        loan_layout.addWidget(loan_label)
-        loan_layout.addWidget(self.loan_combo, 1)
-        loan_layout.addWidget(self.settle_loan_btn)
-        self.main_layout.addLayout(loan_layout)
+        self.delete_loan_btn = QPushButton("حذف وام")
+        self.delete_loan_btn.setFont(QFont("B Yekan", 11))
+        self.delete_loan_btn.setIcon(QIcon.fromTheme("edit-delete"))
+        self.delete_loan_btn.setStyleSheet("QPushButton { background-color: #c0392b; color: white; border-radius: 8px; padding: 10px;} QPushButton:hover { background-color: #e74c3c; } QPushButton:disabled { background-color: #95a5a6; }")
+        
+        self.edit_loan_btn = QPushButton("اصلاح وام")
+        self.edit_loan_btn.setFont(QFont("B Yekan", 11))
+        self.edit_loan_btn.setIcon(QIcon.fromTheme("document-edit"))
+        self.edit_loan_btn.setStyleSheet("QPushButton { background-color: #f39c12; color: white; border-radius: 8px; padding: 10px;} QPushButton:hover { background-color: #e67e22; } QPushButton:disabled { background-color: #95a5a6; }")
 
         self.installments_table = QTableWidget()
-        self.installments_table.setColumnCount(5)
-        self.installments_table.setHorizontalHeaderLabels(["تاریخ سررسید", "مبلغ قسط", "مانده", "وضعیت قسط", "عملیات"])
+        self.installments_table.setColumnCount(6)
+        self.installments_table.setHorizontalHeaderLabels(["ID قسط", "تاریخ سررسید", "مبلغ قسط", "مانده", "وضعیت قسط", "عملیات"])
         self.installments_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.installments_table.setFont(QFont("B Yekan", 10))
         self.installments_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.installments_table.setSelectionMode(QTableWidget.SingleSelection)
-        self.main_layout.addWidget(self.installments_table)
 
-        self.refresh_data()
+    def _connect_signals(self):
+        """اتصال سیگنال‌ها به اسلات‌ها فقط یک بار انجام می‌شود."""
+        self.customer_combo.currentIndexChanged.connect(self.load_customer_loans)
+        self.loan_combo.currentIndexChanged.connect(self.load_loan_installments)
+        self.settle_loan_btn.clicked.connect(self.show_settlement_dialog)
+        self.delete_loan_btn.clicked.connect(self.delete_loan_confirmation)
+        self.edit_loan_btn.clicked.connect(self.show_edit_loan_dialog)
+
+    def build_ui(self):
+        """این تابع فقط ویجت‌های از قبل ساخته شده را در لایه قرار می‌دهد."""
+        self.clear_layout(self.main_layout)
+
+        self.main_layout.addWidget(self.title_label)
+        
+        customer_layout = QHBoxLayout()
+        customer_layout.addWidget(self.customer_label)
+        customer_layout.addWidget(self.customer_combo)
+        self.main_layout.addLayout(customer_layout)
+
+        loan_layout = QHBoxLayout()
+        loan_layout.addWidget(self.loan_label)
+        loan_layout.addWidget(self.loan_combo, 1)
+        loan_layout.addWidget(self.edit_loan_btn)
+        loan_layout.addWidget(self.settle_loan_btn)
+        loan_layout.addWidget(self.delete_loan_btn)
+        self.main_layout.addLayout(loan_layout)
+
+        self.main_layout.addWidget(self.installments_table)
 
     def refresh_data(self):
         self.load_customers_to_combo()
-        self.customer_combo.setCurrentIndex(0)
-        self.loan_combo.clear()
-        self.installments_table.setRowCount(0)
-        self.settle_loan_btn.setEnabled(False)
-    
+        # بقیه موارد در cascade فراخوانی می‌شوند
+
+    # ... (بقیه توابع کلاس بدون تغییر باقی می‌مانند) ...
+
     def clear_layout(self, layout):
         if layout is not None:
             while layout.count():
                 child = layout.takeAt(0)
                 if child.widget() is not None:
-                    child.widget().deleteLater()
+                    child.widget().setParent(None) # جدا کردن ویجت از لایه
                 elif child.layout() is not None:
                     self.clear_layout(child.layout())
 
     def load_customers_to_combo(self):
-        customers = self.db_manager.get_all_customers()
+        # جلوگیری از فراخوانی‌های تودرتو هنگام پاک کردن
+        self.customer_combo.blockSignals(True)
         self.customer_combo.clear()
+        self.customer_combo.blockSignals(False)
+        
         self.customer_combo.addItem("یک مشتری انتخاب کنید", None)
+        customers = self.db_manager.get_all_customers()
         for customer_id, name in customers:
             self.customer_combo.addItem(name, customer_id)
             
     def load_customer_loans(self):
-        self.current_customer_id = self.customer_combo.currentData()
+        # پاک کردن اطلاعات قبلی
         self.loan_combo.clear()
         self.installments_table.setRowCount(0)
         self.settle_loan_btn.setEnabled(False)
+        self.delete_loan_btn.setEnabled(False)
+        self.edit_loan_btn.setEnabled(False)
+        
+        self.current_customer_id = self.customer_combo.currentData()
         
         if self.current_customer_id:
             loans = self.db_manager.get_customer_loans(self.current_customer_id)
             if loans:
                 self.loan_combo.addItem("یک وام انتخاب کنید", None)
                 for loan_id, amount, term, date in loans:
-                    self.loan_combo.addItem(f"وام به مبلغ {format_money(amount)} ({term} ماهه)", loan_id)
-    
+                    self.loan_combo.addItem(f"وام ID: {loan_id} - مبلغ {format_money(amount)} ({term} ماهه)", loan_id)
+
     def load_loan_installments(self):
-        self.current_loan_id = self.loan_combo.currentData()
         self.installments_table.setRowCount(0)
+        self.current_loan_id = self.loan_combo.currentData()
         
         if self.current_loan_id:
             is_fully_paid = self.db_manager.is_loan_fully_paid(self.current_loan_id)
             self.settle_loan_btn.setEnabled(not is_fully_paid)
+            self.delete_loan_btn.setEnabled(True)
+            has_paid = self.db_manager.has_paid_installments(self.current_loan_id)
+            self.edit_loan_btn.setEnabled(not has_paid)
 
             installments = self.db_manager.get_loan_installments(self.current_loan_id)
             for row, installment in enumerate(installments):
@@ -128,19 +163,21 @@ class InstallmentPanel(QWidget):
                     status = "پرداخت شده"
                 elif amount_paid > 0:
                     status = "پرداخت ناقص"
-                
-                self.installments_table.setItem(row, 0, QTableWidgetItem(due_date))
-                self.installments_table.setItem(row, 1, QTableWidgetItem(format_money(amount_due)))
-                self.installments_table.setItem(row, 2, QTableWidgetItem(format_money(remaining_amount)))
-                self.installments_table.setItem(row, 3, QTableWidgetItem(status))
+                self.installments_table.setItem(row, 0, QTableWidgetItem(str(installment_id)))
+                self.installments_table.setItem(row, 1, QTableWidgetItem(due_date))
+                self.installments_table.setItem(row, 2, QTableWidgetItem(format_money(amount_due)))
+                self.installments_table.setItem(row, 3, QTableWidgetItem(format_money(remaining_amount)))
+                self.installments_table.setItem(row, 4, QTableWidgetItem(status))
                 
                 if not is_fully_paid and status != "پرداخت شده":
                     pay_btn = QPushButton("پرداخت قسط")
                     pay_btn.setStyleSheet("QPushButton { background-color: #2ecc71; color: white; border-radius: 5px; padding: 5px;} QPushButton:hover { background-color: #27ae60; }")
                     pay_btn.clicked.connect(lambda _, inst_id=installment_id, rem_amount=remaining_amount: self.show_pay_dialog(inst_id, rem_amount))
-                    self.installments_table.setCellWidget(row, 4, pay_btn)
+                    self.installments_table.setCellWidget(row, 5, pay_btn)
         else:
             self.settle_loan_btn.setEnabled(False)
+            self.delete_loan_btn.setEnabled(False)
+            self.edit_loan_btn.setEnabled(False)
             
     def show_settlement_dialog(self):
         if not self.current_loan_id:
@@ -148,20 +185,29 @@ class InstallmentPanel(QWidget):
             return
 
         details = self.db_manager.get_loan_for_settlement(self.current_loan_id)
-        if not details:
-            QMessageBox.critical(self, "خطا", "خطا در دریافت اطلاعات تسویه وام.")
+        if not details or not details.get('loan_grant_date'):
+            QMessageBox.critical(self, "خطا", "اطلاعات وام یا تاریخ پرداخت آن یافت نشد.")
             return
 
         principal = details['amount']
         interest_rate = details['interest_rate']
         total_paid = details.get('total_paid') or 0
-        start_date_str = details['start_date']
+        loan_grant_date_str = details['loan_grant_date']
         
-        start_date = jdatetime.datetime.strptime(start_date_str, '%Y/%m/%d').date()
+        loan_grant_date = jdatetime.datetime.strptime(loan_grant_date_str, '%Y/%m/%d').date()
         today = jdatetime.date.today()
         
-        months_passed = (today.year - start_date.year) * 12 + (today.month - start_date.month) + 1
-        
+        if today < loan_grant_date:
+            months_passed = 0
+        else:
+            months_passed = (today.year - loan_grant_date.year) * 12 + (today.month - loan_grant_date.month)
+            if today.day >= loan_grant_date.day:
+                months_passed += 1
+            elif today.day < loan_grant_date.day and months_passed == 0:
+                 months_passed = 1
+            if months_passed == 0 and today > loan_grant_date:
+                months_passed = 1
+
         new_total_interest = principal * (interest_rate / 100) * months_passed
         new_total_loan_value = principal + new_total_interest
         settlement_amount = new_total_loan_value - total_paid
@@ -170,8 +216,7 @@ class InstallmentPanel(QWidget):
 
         dialog = QDialog(self)
         dialog.setWindowTitle("فرم تسویه کامل وام")
-        dialog.setMinimumWidth(500)
-        
+        # ... بقیه کد این تابع بدون تغییر است
         main_layout = QVBoxLayout(dialog)
         form_layout = QFormLayout()
         
@@ -286,9 +331,13 @@ class InstallmentPanel(QWidget):
         
         dialog.exec_()
     
-    def process_payment(self, dialog, installment_id, amount_str, cashbox_id, description, payment_date):
+    def process_payment(self, dialog, installment_id, amount_str, cashbox_id, description, payment_date_str):
+        today = jdatetime.date.today()
         try:
-            jdatetime.datetime.strptime(payment_date, '%Y/%m/%d')
+            payment_date = jdatetime.datetime.strptime(payment_date_str, '%Y/%m/%d').date()
+            if payment_date > today:
+                QMessageBox.warning(dialog, "خطای تاریخ", "تاریخ پرداخت نمی‌تواند در آینده باشد.")
+                return
         except ValueError:
             QMessageBox.warning(dialog, "خطا", "فرمت تاریخ پرداخت صحیح نیست. لطفا از فرمت YYYY/MM/DD استفاده کنید.")
             return
@@ -316,7 +365,7 @@ class InstallmentPanel(QWidget):
         
         success = self.db_manager.pay_installment(
             self.current_customer_id, installment_id, amount, 
-            cashbox_id, transaction_description, payment_date
+            cashbox_id, transaction_description, payment_date_str
         )
 
         if success:
@@ -325,3 +374,134 @@ class InstallmentPanel(QWidget):
             self.load_loan_installments()
         else:
             QMessageBox.critical(self, "خطا", "خطا در پرداخت قسط. لطفا دوباره تلاش کنید.")
+
+    def delete_loan_confirmation(self):
+        if not self.current_loan_id:
+            QMessageBox.warning(self, "خطا", "ابتدا یک وام را برای حذف انتخاب کنید.")
+            return
+
+        reply = QMessageBox.question(self, 'تایید حذف وام', 
+                                     "آیا از حذف کامل این وام و تمام سوابق آن مطمئن هستید؟\nاین عمل غیرقابل بازگشت است.",
+                                     QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        
+        if reply == QMessageBox.Yes:
+            success, message = self.db_manager.delete_loan_by_id(self.current_loan_id)
+            if success:
+                QMessageBox.information(self, "حذف موفق", "وام با موفقیت حذف شد.")
+                self.load_customer_loans() 
+            else:
+                QMessageBox.critical(self, "خطا", f"خطا در حذف وام:\n{message}")
+
+    def show_edit_loan_dialog(self):
+        if not self.current_loan_id:
+            QMessageBox.warning(self, "خطا", "ابتدا یک وام را برای اصلاح انتخاب کنید.")
+            return
+
+        if self.db_manager.has_paid_installments(self.current_loan_id):
+            QMessageBox.critical(self, "امکان اصلاح وجود ندارد", "این وام به دلیل داشتن اقساط پرداخت شده، قابل اصلاح نیست.")
+            return
+
+        dialog = LoanEditDialog(self.current_loan_id, self.db_manager, self)
+        if dialog.exec_() == QDialog.Accepted:
+            self.load_customer_loans()
+
+
+# --- کلاس جدید برای دیالوگ ویرایش وام ---
+class LoanEditDialog(QDialog):
+    def __init__(self, loan_id, db_manager, parent=None):
+        super().__init__(parent)
+        self.loan_id = loan_id
+        self.db_manager = db_manager
+        
+        self.old_loan_data = self.db_manager.get_loan_details_for_edit(self.loan_id)
+        if not self.old_loan_data:
+            self.reject()
+            return
+        
+        self.setWindowTitle("فرم اصلاح وام")
+        self.setMinimumWidth(500)
+        self.build_ui()
+        self.populate_data()
+
+    def build_ui(self):
+        self.main_layout = QVBoxLayout(self)
+        form_layout = QFormLayout()
+        
+        self.customer_combo = QComboBox()
+        self.cashbox_combo = QComboBox()
+        self.amount_input = QLineEdit()
+        self.term_input = QLineEdit()
+        self.interest_input = QLineEdit()
+        self.start_date_input = QLineEdit()
+        self.transaction_date_input = QLineEdit()
+        self.description_input = QLineEdit()
+
+        form_layout.addRow("مشتری:", self.customer_combo)
+        form_layout.addRow("پرداخت از صندوق:", self.cashbox_combo)
+        form_layout.addRow("مبلغ وام (تومان):", self.amount_input)
+        form_layout.addRow("مدت بازپرداخت (ماه):", self.term_input)
+        form_layout.addRow("سود ماهانه (درصد):", self.interest_input)
+        form_layout.addRow("تاریخ پرداخت وام:", self.transaction_date_input)
+        form_layout.addRow("تاریخ اولین قسط:", self.start_date_input)
+        form_layout.addRow("شرح:", self.description_input)
+        
+        self.save_btn = QPushButton("ثبت تغییرات")
+        self.save_btn.clicked.connect(self.process_update)
+        
+        self.main_layout.addLayout(form_layout)
+        self.main_layout.addWidget(self.save_btn)
+
+    def populate_data(self):
+        customers = self.db_manager.get_all_customers()
+        for cid, name in customers:
+            self.customer_combo.addItem(name, cid)
+        
+        cashboxes = self.db_manager.get_all_cash_boxes()
+        for bid, name, balance in cashboxes:
+            self.cashbox_combo.addItem(f"{name} ({format_money(balance)})", bid)
+
+        self.customer_combo.setCurrentIndex(self.customer_combo.findData(self.old_loan_data['customer_id']))
+        self.cashbox_combo.setCurrentIndex(self.cashbox_combo.findData(self.old_loan_data['cash_box_id']))
+        self.amount_input.setText(str(int(self.old_loan_data['amount'])))
+        self.term_input.setText(str(self.old_loan_data['loan_term']))
+        self.interest_input.setText(str(self.old_loan_data['interest_rate']))
+        self.transaction_date_input.setText(self.old_loan_data['transaction_date'])
+        self.start_date_input.setText(self.old_loan_data['start_date'])
+        self.description_input.setText(self.old_loan_data['description'])
+
+    def process_update(self):
+        try:
+            new_loan_data = {
+                'customer_id': self.customer_combo.currentData(),
+                'cash_box_id': self.cashbox_combo.currentData(),
+                'amount': int(self.amount_input.text().replace("،", "")),
+                'loan_term': int(self.term_input.text()),
+                'interest_rate': float(self.interest_input.text()),
+                'start_date': self.start_date_input.text(),
+                'transaction_date': self.transaction_date_input.text(),
+                'description': self.description_input.text()
+            }
+            
+            total_interest = (new_loan_data['amount'] * (new_loan_data['interest_rate'] / 100)) * new_loan_data['loan_term']
+            total_amount_with_interest = new_loan_data['amount'] + total_interest
+            installment_amount = total_amount_with_interest / new_loan_data['loan_term']
+            
+            new_installments_data = []
+            start_date_jalali = jdatetime.date(*map(int, new_loan_data['start_date'].split('/')))
+            for i in range(new_loan_data['loan_term']):
+                due_date_jalali = add_months_jalali(start_date_jalali, i)
+                new_installments_data.append({
+                    'due_date': due_date_jalali.strftime('%Y/%m/%d'),
+                    'amount_due': installment_amount
+                })
+
+            success, message = self.db_manager.update_loan_and_installments(self.loan_id, self.old_loan_data, new_loan_data, new_installments_data)
+            
+            if success:
+                QMessageBox.information(self, "موفقیت", "وام با موفقیت اصلاح شد.")
+                self.accept()
+            else:
+                QMessageBox.critical(self, "خطا", f"خطا در اصلاح وام:\n{message}")
+
+        except (ValueError, IndexError) as e:
+            QMessageBox.warning(self, "خطای ورودی", f"لطفا تمام فیلدها را به درستی پر کنید.\n{e}")

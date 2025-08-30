@@ -1,8 +1,9 @@
+# createdatabase.py (نسخه نهایی با رفع کامل باگ multi=True)
+
 import mysql.connector
 from mysql.connector import Error
 import configparser
 
-# A. خواندن تنظیمات دیتابیس از فایل config.ini
 def get_db_config():
     config = configparser.ConfigParser()
     config.read('config.ini')
@@ -13,7 +14,6 @@ def get_db_config():
         'database': config['mysql']['database']
     }
 
-# B. تعریف تابع برای ایجاد اتصال به سرور MySQL
 def create_server_connection(host_name, user_name, user_password):
     connection = None
     try:
@@ -27,35 +27,37 @@ def create_server_connection(host_name, user_name, user_password):
         print(f"خطا در اتصال به سرور: '{err}'")
     return connection
 
-# C. تعریف تابع برای اجرای دستورات SQL
+# --- تابع execute_query به طور کامل بازنویسی شد ---
 def execute_query(connection, query):
     cursor = connection.cursor()
     try:
-        cursor.execute(query)
+        # دستورات SQL را بر اساس نقطه ویرگول (;) از هم جدا می‌کنیم
+        sql_commands = query.split(';')
+        
+        # هر دستور را به صورت جداگانه اجرا می‌کنیم
+        for command in sql_commands:
+            if command.strip(): # از اجرای دستورات خالی جلوگیری می‌کند
+                cursor.execute(command)
+                
         connection.commit()
-        print("دستور SQL با موفقیت اجرا شد.")
+        print("دستورات SQL با موفقیت اجرا شدند.")
     except Error as err:
         print(f"خطا در اجرای دستور: '{err}'")
+# --- پایان تغییرات ---
 
-# D. تعریف تابع اصلی برای ساخت دیتابیس و جداول
+
 def create_database_and_tables():
     db_config = get_db_config()
     db_name = db_config['database']
 
-    # 1. اتصال به سرور MySQL
     connection = create_server_connection(db_config['host'], db_config['user'], db_config['password'])
     if not connection:
         return
     
-    # --- حذف دیتابیس قبلی برای اطمینان از ساختار جدید ---
-    drop_db_query = f"DROP DATABASE IF EXISTS {db_name}"
-    execute_query(connection, drop_db_query)
+    # اجرای دستورات حذف و ایجاد دیتابیس به صورت جداگانه
+    execute_query(connection, f"DROP DATABASE IF EXISTS {db_name};")
+    execute_query(connection, f"CREATE DATABASE {db_name} CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;")
     
-    # 2. ایجاد دیتابیس جدید
-    create_db_query = f"CREATE DATABASE {db_name} CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
-    execute_query(connection, create_db_query)
-    
-    # 3. بستن اتصال و ایجاد اتصال جدید با دیتابیس
     connection.close()
     
     try:
@@ -70,33 +72,29 @@ def create_database_and_tables():
         print(f"خطا در اتصال به دیتابیس: '{err}'")
         return
 
-    # 4. تعریف کوئری‌های SQL برای ساخت تمام جداول
-    create_tables_queries = [
-        """
-        CREATE TABLE IF NOT EXISTS customers (
-            id INT AUTO_INCREMENT PRIMARY KEY,
+    create_tables_queries = """
+        CREATE TABLE customers (
+            id BIGINT NOT NULL PRIMARY KEY,
             name VARCHAR(255) NOT NULL,
             national_code VARCHAR(10) UNIQUE,
             phone_number VARCHAR(15),
             address TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-        );
-        """,
-        """
-        CREATE TABLE IF NOT EXISTS cash_boxes (
-            id INT AUTO_INCREMENT PRIMARY KEY,
+        ) ENGINE=InnoDB;
+
+        CREATE TABLE cash_boxes (
+            id BIGINT NOT NULL PRIMARY KEY,
             name VARCHAR(255) NOT NULL,
             balance DECIMAL(15, 0) DEFAULT 0,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-        );
-        """,
-        """
-        CREATE TABLE IF NOT EXISTS loans (
-            id INT AUTO_INCREMENT PRIMARY KEY,
-            customer_id INT NOT NULL,
-            cash_box_id INT NOT NULL,
+        ) ENGINE=InnoDB;
+
+        CREATE TABLE loans (
+            id BIGINT NOT NULL PRIMARY KEY,
+            customer_id BIGINT NOT NULL,
+            cash_box_id BIGINT NOT NULL,
             amount DECIMAL(15, 0) NOT NULL,
             loan_term INT NOT NULL,
             interest_rate DECIMAL(5, 2) NOT NULL,
@@ -105,12 +103,11 @@ def create_database_and_tables():
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
             FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE CASCADE,
             FOREIGN KEY (cash_box_id) REFERENCES cash_boxes(id) ON DELETE CASCADE
-        );
-        """,
-        """
-        CREATE TABLE IF NOT EXISTS installments (
-            id INT AUTO_INCREMENT PRIMARY KEY,
-            loan_id INT NOT NULL,
+        ) ENGINE=InnoDB;
+
+        CREATE TABLE installments (
+            id BIGINT NOT NULL PRIMARY KEY,
+            loan_id BIGINT NOT NULL,
             due_date VARCHAR(10) NOT NULL,
             amount_due DECIMAL(15, 0) NOT NULL,
             amount_paid DECIMAL(15, 0) DEFAULT 0,
@@ -119,60 +116,53 @@ def create_database_and_tables():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
             FOREIGN KEY (loan_id) REFERENCES loans(id) ON DELETE CASCADE
-        );
-        """,
-        """
-        CREATE TABLE IF NOT EXISTS payment_details (
-            id INT AUTO_INCREMENT PRIMARY KEY,
-            installment_id INT NOT NULL,
+        ) ENGINE=InnoDB;
+
+        CREATE TABLE payment_details (
+            id BIGINT NOT NULL PRIMARY KEY,
+            installment_id BIGINT NOT NULL,
             amount DECIMAL(15, 0) NOT NULL,
             payment_date VARCHAR(10) NOT NULL,
-            cashbox_id INT NOT NULL,
+            cashbox_id BIGINT NOT NULL,
             description TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (installment_id) REFERENCES installments(id) ON DELETE CASCADE,
             FOREIGN KEY (cashbox_id) REFERENCES cash_boxes(id) ON DELETE CASCADE
-        );
-        """,
-        """
-        CREATE TABLE IF NOT EXISTS expense_categories (
-            id INT AUTO_INCREMENT PRIMARY KEY,
+        ) ENGINE=InnoDB;
+        
+        CREATE TABLE expense_categories (
+            id BIGINT NOT NULL PRIMARY KEY,
             name VARCHAR(255) NOT NULL UNIQUE
-        );
-        """,
-        """
-        CREATE TABLE IF NOT EXISTS expenses (
-            id INT AUTO_INCREMENT PRIMARY KEY,
-            category_id INT NOT NULL,
-            cashbox_id INT NOT NULL,
+        ) ENGINE=InnoDB;
+
+        CREATE TABLE expenses (
+            id BIGINT NOT NULL PRIMARY KEY,
+            category_id BIGINT NOT NULL,
+            cashbox_id BIGINT NOT NULL,
             amount DECIMAL(15, 0) NOT NULL,
             description TEXT,
             expense_date VARCHAR(10) NOT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (category_id) REFERENCES expense_categories(id),
             FOREIGN KEY (cashbox_id) REFERENCES cash_boxes(id) ON DELETE CASCADE
-        );
-        """,
-        """
-        CREATE TABLE IF NOT EXISTS transactions (
-            id INT AUTO_INCREMENT PRIMARY KEY,
+        ) ENGINE=InnoDB;
+
+        CREATE TABLE transactions (
+            id BIGINT NOT NULL PRIMARY KEY,
             type VARCHAR(50) NOT NULL,
             amount DECIMAL(15, 0) NOT NULL,
             date VARCHAR(10) NOT NULL,
-            source_id INT,
-            destination_id INT,
+            source_id BIGINT,
+            destination_id BIGINT,
             description TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        );
-        """
-    ]
+        ) ENGINE=InnoDB;
+    """
 
-    # 5. اجرای کوئری‌های ساخت جداول
     if connection:
-        for query in create_tables_queries:
-            execute_query(connection, query)
+        execute_query(connection, create_tables_queries)
         connection.close()
-        print("تمامی جداول با موفقیت ایجاد شدند.")
+        print("تمامی جداول با ساختار جدید با موفقیت ایجاد شدند.")
 
 if __name__ == "__main__":
     create_database_and_tables()

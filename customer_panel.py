@@ -64,13 +64,17 @@ class CustomerPanel(QWidget):
         self.search_input.textChanged.connect(lambda: self.search_timer.start(500))
         
         self.customers_table = QTableWidget()
-        self.customers_table.setColumnCount(6)
-        self.customers_table.setHorizontalHeaderLabels(["نام و نام خانوادگی", "کد ملی", "شماره تماس", "آدرس", "میزان بدهی", "عملیات"])
+        self.customers_table.setColumnCount(7)
+        self.customers_table.setHorizontalHeaderLabels(["ID", "نام و نام خانوادگی", "کد ملی", "شماره تماس", "آدرس", "میزان بدهی", "عملیات"])
         
         header = self.customers_table.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.Stretch)
         header.setSectionResizeMode(3, QHeaderView.ResizeToContents)
         header.setSectionResizeMode(5, QHeaderView.Fixed)
+        header.setSectionResizeMode(0, QHeaderView.ResizeToContents) # ستون ID
+        header.setSectionResizeMode(4, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(6, QHeaderView.Fixed)
+        self.customers_table.setColumnWidth(6, 130)
         self.customers_table.setColumnWidth(5, 130)
         self.customers_table.setAlternatingRowColors(True)
         self.customers_table.setSelectionBehavior(QAbstractItemView.SelectRows)
@@ -119,17 +123,17 @@ class CustomerPanel(QWidget):
         
         for row, customer in enumerate(customers):
             self.customers_table.insertRow(row)
-            
-            self.customers_table.setItem(row, 0, QTableWidgetItem(customer['name']))
-            self.customers_table.setItem(row, 1, QTableWidgetItem(customer['national_code']))
-            self.customers_table.setItem(row, 2, QTableWidgetItem(customer['phone_number']))
-            self.customers_table.setItem(row, 3, QTableWidgetItem(customer['address']))
+            self.customers_table.setItem(row, 0, QTableWidgetItem(str(customer['id'])))
+            self.customers_table.setItem(row, 1, QTableWidgetItem(customer['name']))
+            self.customers_table.setItem(row, 2, QTableWidgetItem(customer['national_code']))
+            self.customers_table.setItem(row, 3, QTableWidgetItem(customer['phone_number']))
+            self.customers_table.setItem(row, 4, QTableWidgetItem(customer['address']))
             
             debt_item = QTableWidgetItem(format_money(customer['total_debt']))
             if customer['total_debt'] > 0:
                 debt_item.setForeground(QColor("#c0392b"))
                 debt_item.setFont(QFont("B Yekan", 10, QFont.Bold))
-            self.customers_table.setItem(row, 4, debt_item)
+            self.customers_table.setItem(row, 5, debt_item)
                 
             ops_widget = QWidget()
             ops_layout = QHBoxLayout(ops_widget)
@@ -152,7 +156,7 @@ class CustomerPanel(QWidget):
             ops_layout.addWidget(edit_btn)
             ops_layout.addWidget(delete_btn)
             
-            self.customers_table.setCellWidget(row, 5, ops_widget)
+            self.customers_table.setCellWidget(row, 6, ops_widget)
             
         self.update_pagination_controls()
 
