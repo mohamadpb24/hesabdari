@@ -193,8 +193,10 @@ class CashboxPanel(QWidget):
                     amount_item.setForeground(QColor("#c0392b")) # قرمز برای انتقال خروجی
             
             id_item = NumericTableWidgetItem(str(transaction['id'])); id_item.setData(Qt.UserRole, transaction['id'])
-            date_obj = jdatetime.datetime.strptime(transaction['date'], '%Y/%m/%d').date()
-            date_item = DateTableWidgetItem(transaction['date']); date_item.setData(Qt.UserRole, date_obj)
+            date_as_string = str(transaction['date'])
+            date_obj = jdatetime.datetime.strptime(date_as_string, '%Y-%m-%d').date()
+            date_item = DateTableWidgetItem(date_obj.strftime('%Y/%m/%d'))
+            date_item.setData(Qt.UserRole, date_obj)
             balance_item = NumericTableWidgetItem(format_money(transaction['balance_after'])); balance_item.setData(Qt.UserRole, transaction['balance_after'])
             
             transactions_table.setItem(row, 0, id_item)

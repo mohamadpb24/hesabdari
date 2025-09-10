@@ -152,8 +152,13 @@ class ReportingPanel(QWidget):
         self.customer_combo.clear()
         customers = self.db_manager.get_all_customers_with_details()
         self.customer_combo.addItem("یک مشتری را انتخاب کنید...", None)
-        for customer in customers:
-            self.customer_combo.addItem(customer[1], customer)
+        for customer_tuple in customers:
+            # تبدیل تاپل به دیکشنری برای استفاده آسان‌تر
+            customer_data = {
+                'id': customer_tuple[0], 'name': customer_tuple[1], 'national_code': customer_tuple[2],
+                'phone_number': customer_tuple[3], 'address': customer_tuple[4], 'total_debt': customer_tuple[5]
+            }
+            self.customer_combo.addItem(customer_data['name'], customer_data)
 
     def load_cashboxes_to_combo(self):
         self.cashbox_combo.clear()
@@ -165,14 +170,11 @@ class ReportingPanel(QWidget):
     def update_loan_combo(self):
         self.loan_combo.clear()
         customer_data = self.customer_combo.currentData()
-        
         if customer_data:
-            customer_id = customer_data[0]
-            loans = self.db_manager.get_customer_loans(customer_id)
-            
+            loans = self.db_manager.get_customer_loans(customer_data['id'])
             self.loan_combo.addItem("همه وام‌ها", "all")
-            for loan_id, amount, term, date in loans:
-                item_text = f"وام {loan_id}: {format_money(amount)} ({term} ماهه)"
+            for loan_id, readable_id, amount, term in loans:
+                item_text = f"{readable_id}: {format_money(amount)} ({term} ماهه)"
                 self.loan_combo.addItem(item_text, loan_id)
         else:
             self.loan_combo.addItem("ابتدا یک مشتری انتخاب کنید", None)
@@ -198,26 +200,16 @@ class ReportingPanel(QWidget):
                 QMessageBox.critical(self, "خطا", "خطا در ساخت گزارش PDF.")
 
     def generate_customer_report(self):
-        customer_tuple = self.customer_combo.currentData()
+        customer_data = self.customer_combo.currentData()
         selected_loan_id = self.loan_combo.currentData()
-
-        if not customer_tuple:
+        if not customer_data:
             QMessageBox.warning(self, "خطا", "لطفاً یک مشتری را انتخاب کنید.")
             return
-        
-        customer_debt_info = self.db_manager.get_single_customer_with_debt(customer_tuple[0])
-        if not customer_debt_info:
-            QMessageBox.critical(self, "خطا", "اطلاعات بدهی مشتری یافت نشد.")
-            return
-            
-        loans, installments_by_loan = self.db_manager.get_full_customer_report_data(customer_debt_info['id'])
-        if loans is None:
-            QMessageBox.critical(self, "خطا", "خطا در دریافت اطلاعات وام‌ها از پایگاه داده.")
-            return
 
-        file_path, _ = QFileDialog.getSaveFileName(self, "ذخیره پرونده مشتری", f"پرونده_{customer_debt_info['name']}.pdf", "PDF Files (*.pdf)")
+        loans, installments_by_loan = self.db_manager.get_full_customer_report_data(customer_data['id'])
+        file_path, _ = QFileDialog.getSaveFileName(self, "ذخیره پرونده مشتری", f"پرونده_{customer_data['name']}.pdf", "PDF Files (*.pdf)")
         if file_path:
-            success = report_generator.create_single_customer_report(customer_debt_info, loans, installments_by_loan, file_path, selected_loan_id)
+            success = report_generator.create_single_customer_report(customer_data, loans, installments_by_loan, file_path, selected_loan_id)
             if success:
                 QMessageBox.information(self, "موفقیت", "پرونده مشتری با موفقیت ذخیره شد.")
             else:
