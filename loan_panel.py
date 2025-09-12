@@ -1,10 +1,10 @@
-# loan_panel.py
+# loan_panel.py (نسخه نهایی با ظاهر جدید و چیدمان اصلاح شده)
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QFormLayout, QComboBox, QLineEdit, QTableWidget,
-    QTableWidgetItem, QHeaderView, QMessageBox
+    QTableWidgetItem, QHeaderView, QMessageBox, QGroupBox
 )
-from PyQt5.QtGui import QFont
+from PyQt5.QtGui import QFont, QIcon
 from PyQt5.QtCore import Qt
 import jdatetime
 
@@ -16,234 +16,263 @@ class LoanPanel(QWidget):
         super().__init__()
         self.db_manager = DatabaseManager()
         self.main_layout = QVBoxLayout(self)
-        self.main_layout.setAlignment(Qt.AlignTop)
-        
-        # متغیرهایی برای نگهداری مقادیر محاسبه شده
-        self.loan_amount = 0
-        self.total_interest_amount = 0
         self.total_loan_amount_with_interest = 0
-
         self.build_ui()
 
     def build_ui(self):
-        # ... (این تابع بدون تغییر باقی می‌ماند)
-        self.clear_layout(self.main_layout)
-
-        title_label = QLabel("پرداخت وام جدید")
-        title_label.setFont(QFont("B Yekan", 16, QFont.Bold))
+        self.main_layout.setContentsMargins(0, 0, 0, 0)
+        
+        container = QWidget()
+        container.setObjectName("container")
+        container.setStyleSheet("""
+            #container { background-color: #f4f7f9; }
+            QGroupBox {
+                background-color: #ffffff;
+                border: 1px solid #e1e8ed;
+                border-radius: 12px;
+                padding: 20px;
+            }
+            QLineEdit, QComboBox {
+                padding: 12px;
+                border: 1px solid #ced4da;
+                border-radius: 8px;
+                background-color: #f8f9fa;
+            }
+            QLabel#summaryLabel {
+                font-size: 11pt; padding: 12px;
+                background-color: #e9ecef; border-radius: 8px;
+                color: #495057;
+            }
+        """)
+        
+        container_layout = QVBoxLayout(container)
+        container_layout.setContentsMargins(25, 20, 25, 20)
+        
+        title_label = QLabel("ایجاد وام جدید")
+        title_label.setFont(QFont("B Yekan", 22, QFont.Bold))
         title_label.setAlignment(Qt.AlignCenter)
+        title_label.setStyleSheet("margin-bottom: 15px; color: #2c3e50;")
 
-        form_layout = QFormLayout()
-        line_edit_style = "QLineEdit { background-color: white; border: 1px solid #bdc3c7; border-radius: 5px; padding: 5px; }"
-        combo_style = "QComboBox { background-color: white; border: 1px solid #bdc3c7; border-radius: 5px; padding: 5px; }"
+        # --- Top Layout for Forms ---
+        top_layout = QHBoxLayout()
+        top_layout.setSpacing(25)
 
-        self.transaction_date_input = QLineEdit(jdatetime.date.today().strftime('%Y/%m/%d'))
-        self.transaction_date_input.setStyleSheet(line_edit_style)
-        form_layout.addRow("تاریخ پرداخت وام:", self.transaction_date_input)
-
+        # --- Basic Info GroupBox ---
+        customer_group = QGroupBox("اطلاعات پایه")
+        customer_layout = QFormLayout(customer_group)
         self.customer_combo = QComboBox()
-        self.customer_combo.setStyleSheet(combo_style)
-        self.load_customers_to_combo()
-        form_layout.addRow("انتخاب مشتری:", self.customer_combo)
-
         self.cashbox_combo = QComboBox()
-        self.cashbox_combo.setStyleSheet(combo_style)
-        self.load_cashboxes_to_combo()
-        form_layout.addRow("انتخاب صندوق:", self.cashbox_combo)
-
+        self.transaction_date_input = QLineEdit(jdatetime.date.today().strftime('%Y/%m/%d'))
+        customer_layout.addRow("انتخاب مشتری:", self.customer_combo)
+        customer_layout.addRow("پرداخت از صندوق:", self.cashbox_combo)
+        customer_layout.addRow("تاریخ پرداخت وام:", self.transaction_date_input)
+        
+        # --- Loan Details GroupBox ---
+        details_group = QGroupBox("جزئیات وام")
+        details_layout = QFormLayout(details_group)
         self.amount_input = QLineEdit()
-        self.amount_input.setPlaceholderText("مبلغ وام را وارد کنید")
-        self.amount_input.textChanged.connect(self.format_and_calculate)
-        self.amount_input.setStyleSheet(line_edit_style)
-        form_layout.addRow("مبلغ وام (تومان):", self.amount_input)
-
         self.term_input = QLineEdit()
-        self.term_input.setPlaceholderText("به ماه")
-        self.term_input.textChanged.connect(self.calculate_installments)
-        self.term_input.setStyleSheet(line_edit_style)
-        form_layout.addRow("مدت بازپرداخت (ماه):", self.term_input)
-
         self.interest_input = QLineEdit()
-        self.interest_input.setPlaceholderText("درصد ماهانه")
-        self.interest_input.textChanged.connect(self.calculate_installments)
-        self.interest_input.setStyleSheet(line_edit_style)
-        form_layout.addRow("سود ماهانه (درصد):", self.interest_input)
-
+        self.penalty_input = QLineEdit("0")
         self.start_date_input = QLineEdit()
-        self.start_date_input.setPlaceholderText("مثال: 1403/05/30")
-        self.start_date_input.textChanged.connect(self.calculate_installments)
-        self.start_date_input.setStyleSheet(line_edit_style)
-        form_layout.addRow("تاریخ اولین قسط:", self.start_date_input)
-
         self.description_input = QLineEdit()
-        self.description_input.setPlaceholderText("شرح مربوط به وام")
-        self.description_input.setStyleSheet(line_edit_style)
-        form_layout.addRow("شرح:", self.description_input)
+        
+        details_layout.addRow("مبلغ وام:", self.amount_input)
+        details_layout.addRow("مدت بازپرداخت (ماه):", self.term_input)
+        details_layout.addRow("سود ماهانه (%):", self.interest_input)
+        details_layout.addRow("جریمه روزانه (%):", self.penalty_input)
+        details_layout.addRow("تاریخ اولین قسط:", self.start_date_input)
+        details_layout.addRow("شرح:", self.description_input)
 
+        top_layout.addWidget(customer_group)
+        top_layout.addWidget(details_group)
+
+        # --- Bottom Layout for Preview ---
+        preview_group = QGroupBox("پیش‌نمایش اقساط")
+        preview_layout = QVBoxLayout(preview_group)
+        
+        self.summary_label = QLabel("اطلاعات را برای محاسبه وارد کنید.")
+        self.summary_label.setObjectName("summaryLabel")
+        self.summary_label.setAlignment(Qt.AlignCenter)
+        
         self.installments_table = QTableWidget()
         self.installments_table.setColumnCount(2)
         self.installments_table.setHorizontalHeaderLabels(["تاریخ سررسید", "مبلغ قسط"])
         self.installments_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        self.installments_table.setMinimumHeight(200)
+        
+        preview_layout.addWidget(self.summary_label)
+        preview_layout.addWidget(self.installments_table)
+        
+        # --- Save Button ---
+        self.save_btn = QPushButton(" ثبت نهایی وام")
+        self.save_btn.setFont(QFont("B Yekan", 12, QFont.Bold))
+        self.save_btn.setMinimumHeight(50)
+        self.save_btn.setStyleSheet("""
+            QPushButton { background-color: #2980b9; color: white; border-radius: 12px; padding: 10px; }
+            QPushButton:hover { background-color: #3498db; }
+        """)
 
-        self.summary_label = QLabel("")
-        self.summary_label.setFont(QFont("B Yekan", 12))
-        self.summary_label.setAlignment(Qt.AlignCenter)
-        self.summary_label.setStyleSheet("padding: 10px;")
+        # --- Assemble Layouts ---
+        container_layout.addWidget(title_label)
+        container_layout.addLayout(top_layout)
+        container_layout.addWidget(preview_group)
+        container_layout.addWidget(self.save_btn)
+        self.main_layout.addWidget(container)
 
-        self.save_btn = QPushButton("ثبت وام و اقساط")
-        self.save_btn.setFont(QFont("B Yekan", 12))
-        self.save_btn.setStyleSheet("QPushButton { background-color: #3498db; color: white; border-radius: 10px; padding: 10px; } QPushButton:hover { background-color: #2980b9; }")
+        # --- Connect Signals ---
+        self.amount_input.textChanged.connect(self._format_amount_input)
+        self.term_input.textChanged.connect(self.calculate_installments)
+        self.interest_input.textChanged.connect(self.calculate_installments)
+        self.start_date_input.textChanged.connect(self.calculate_installments)
         self.save_btn.clicked.connect(self.save_loan)
 
-        self.main_layout.addWidget(title_label, alignment=Qt.AlignCenter)
-        self.main_layout.addLayout(form_layout)
-        self.main_layout.addWidget(self.summary_label)
-        self.main_layout.addWidget(self.installments_table)
-        self.main_layout.addWidget(self.save_btn)
+        # --- Initial Data Load ---
+        self.refresh_data()
 
-    def save_loan(self):
-        """
-        اطلاعات فرم را جمع‌آوری کرده و با استفاده از متد تراکنشی در db_manager،
-        وام و اقساط را به صورت یکپارچه ذخیره می‌کند.
-        """
-        try:
-            customer_id = self.customer_combo.currentData()
-            customer_name = self.customer_combo.currentText()
-            cash_box_id = self.cashbox_combo.currentData()
-            loan_amount = int(self.amount_input.text().replace("،", ""))
-            loan_term = int(self.term_input.text())
-            interest_rate = float(self.interest_input.text())
-            start_date_str = self.start_date_input.text()
-            user_description = self.description_input.text()
-            transaction_date_str = self.transaction_date_input.text()
+    def _format_amount_input(self):
+        text = self.amount_input.text()
+        text_no_comma = text.replace(",", "")
+        if text_no_comma.isdigit():
+            formatted_text = f"{int(text_no_comma):,}"
+            if text != formatted_text:
+                self.amount_input.textChanged.disconnect()
+                self.amount_input.setText(formatted_text)
+                self.amount_input.setCursorPosition(len(formatted_text))
+                self.amount_input.textChanged.connect(self._format_amount_input)
+                self.calculate_installments()
+        elif text:
+             self.amount_input.textChanged.disconnect()
+             self.amount_input.clear()
+             self.amount_input.textChanged.connect(self._format_amount_input)
+             self.calculate_installments()
 
-            if not all([customer_id, cash_box_id, loan_amount > 0, loan_term > 0, interest_rate >= 0, start_date_str, transaction_date_str]):
-                QMessageBox.warning(self, "خطا", "لطفا تمام فیلدهای لازم را به درستی پر کنید.")
-                return
-
-            # آماده‌سازی دیکشنری داده‌های وام
-            loan_data = {
-                'customer_id': customer_id,
-                'cash_box_id': cash_box_id,
-                'amount': loan_amount,
-                'loan_term': loan_term,
-                'interest_rate': interest_rate,
-                'start_date': start_date_str,
-                'transaction_date': transaction_date_str,
-                'description': f"پرداخت وام به {customer_name} - {user_description}"
-            }
-
-            # آماده‌سازی لیست داده‌های اقساط
-            installments_data = []
-            start_date_jalali = jdatetime.date(*map(int, start_date_str.split('/')))
-            installment_amount = self.total_loan_amount_with_interest / loan_term
-            for i in range(loan_term):
-                due_date_jalali = add_months_jalali(start_date_jalali, i)
-                installments_data.append({
-                    'due_date': due_date_jalali.strftime('%Y/%m/%d'),
-                    'amount_due': installment_amount
-                })
-
-            # فراخوانی متد تراکنشی
-            success, message = self.db_manager.create_loan_and_installments(loan_data, installments_data)
-
-            if success:
-                QMessageBox.information(self, "موفقیت", message)
-                self.refresh_data()
-            else:
-                QMessageBox.critical(self, "خطا", message)
-
-        except (ValueError, IndexError) as e:
-            QMessageBox.warning(self, "خطای ورودی", f"مقادیر ورودی نامعتبر است. لطفا فیلدها را بررسی کنید.\n{e}")
-
-    # ... (بقیه توابع کلاس بدون تغییر باقی می‌مانند)
-    def clear_layout(self, layout):
-        if layout is not None:
-            while layout.count():
-                child = layout.takeAt(0)
-                if child.widget() is not None:
-                    child.widget().deleteLater()
-                elif child.layout() is not None:
-                    self.clear_layout(child.layout())
-
+    # ... (بقیه توابع کلاس بدون تغییر باقی می‌مانند و نیازی به بازنویسی ندارند)
     def refresh_data(self):
         self.load_customers_to_combo()
         self.load_cashboxes_to_combo()
         self.amount_input.clear()
         self.term_input.clear()
         self.interest_input.clear()
+        self.penalty_input.setText("0")
         self.start_date_input.clear()
         self.description_input.clear()
-        self.summary_label.clear()
+        self.summary_label.setText("اطلاعات را برای محاسبه وارد کنید.")
         self.installments_table.setRowCount(0)
 
-    def format_and_calculate(self):
-        try:
-            text = self.amount_input.text().replace("،", "")
-            if text.isdigit():
-                formatted_text = f"{int(text):,}".replace(",", "،")
-                if self.amount_input.text() != formatted_text:
-                    self.amount_input.setText(formatted_text)
-                self.calculate_installments()
-            elif not text:
-                self.calculate_installments()
-        except Exception:
-            pass
-
     def load_customers_to_combo(self):
-        customers = self.db_manager.get_all_customers()
         self.customer_combo.clear()
-        self.customer_combo.addItem("یک مشتری انتخاب کنید", None)
-        for customer_id, name in customers:
-            self.customer_combo.addItem(name, customer_id)
+        customers = self.db_manager.get_all_customers()
+        self.customer_combo.addItem("یک مشتری انتخاب کنید...", None)
+        if customers:
+            for customer_id, name in customers:
+                self.customer_combo.addItem(name, customer_id)
 
     def load_cashboxes_to_combo(self):
-        cashboxes = self.db_manager.get_all_cash_boxes()
         self.cashbox_combo.clear()
-        self.cashbox_combo.addItem("یک صندوق انتخاب کنید", None)
-        for box_id, name, balance in cashboxes:
-            self.cashbox_combo.addItem(f"{name} ({format_money(balance)})", box_id)
+        cashboxes = self.db_manager.get_all_cash_boxes()
+        self.cashbox_combo.addItem("یک صندوق انتخاب کنید...", None)
+        if cashboxes:
+            for box_id, name, balance in cashboxes:
+                self.cashbox_combo.addItem(f"{name} ({format_money(balance)})", box_id)
 
     def calculate_installments(self):
         try:
-            loan_amount_str = self.amount_input.text().replace("،", "")
-            self.loan_amount = int(loan_amount_str) if loan_amount_str else 0
-
-            loan_term_str = self.term_input.text()
-            interest_rate_str = self.interest_input.text()
+            amount_str = self.amount_input.text().replace(",", "")
+            loan_amount = int(amount_str) if amount_str else 0
+            term_str = self.term_input.text()
+            interest_str = self.interest_input.text()
             start_date_str = self.start_date_input.text()
 
-            if not all([loan_term_str, interest_rate_str, start_date_str, self.loan_amount > 0]):
+            if not all([loan_amount > 0, term_str, interest_str, start_date_str]):
                 self.installments_table.setRowCount(0)
-                self.summary_label.setText("لطفا تمام فیلدهای لازم را پر کنید.")
+                self.summary_label.setText("لطفا فیلدهای مالی و تاریخ را پر کنید.")
                 return
 
-            loan_term = int(loan_term_str)
-            interest_rate = float(interest_rate_str)
+            loan_term = int(term_str)
+            interest_rate = float(interest_str)
             
-            date_parts = start_date_str.split('/')
-            if len(date_parts) != 3: raise ValueError("Invalid date format")
-            start_date_jalali = jdatetime.date(*map(int, date_parts))
+            if len(start_date_str.split('/')) != 3:
+                self.installments_table.setRowCount(0); return
 
-            if loan_term <= 0: raise ValueError("Loan term must be positive")
-
-            self.total_interest_amount = (self.loan_amount * (interest_rate / 100)) * loan_term
-            self.total_loan_amount_with_interest = self.loan_amount + self.total_interest_amount
+            start_date_jalali = jdatetime.date(*map(int, start_date_str.split('/')))
+            total_interest = (loan_amount * (interest_rate / 100)) * loan_term
+            self.total_loan_amount_with_interest = loan_amount + total_interest
             installment_amount = self.total_loan_amount_with_interest / loan_term
 
-            summary = (f"مبلغ کل وام: {format_money(self.loan_amount)}\n"
-                       f"مبلغ کل سود: {format_money(self.total_interest_amount)}\n"
-                       f"مبلغ کل با سود: {format_money(self.total_loan_amount_with_interest)}\n"
-                       f"مبلغ هر قسط: {format_money(installment_amount)}")
-            self.summary_label.setText(summary)
+            summary_text = (f"کل سود: {format_money(total_interest)}  |  "
+                            f"مبلغ نهایی: {format_money(self.total_loan_amount_with_interest)}  |  "
+                            f"هر قسط: {format_money(installment_amount)}")
+            self.summary_label.setText(summary_text)
 
             self.installments_table.setRowCount(loan_term)
             for i in range(loan_term):
-                due_date_jalali = add_months_jalali(start_date_jalali, i)
-                self.installments_table.setItem(i, 0, QTableWidgetItem(due_date_jalali.strftime('%Y/%m/%d')))
+                due_date = add_months_jalali(start_date_jalali, i)
+                self.installments_table.setItem(i, 0, QTableWidgetItem(due_date.strftime('%Y/%m/%d')))
                 self.installments_table.setItem(i, 1, QTableWidgetItem(format_money(installment_amount)))
 
         except (ValueError, IndexError):
             self.installments_table.setRowCount(0)
-            self.summary_label.setText("خطا در ورودی‌ها. لطفا فرمت تاریخ (YYYY/MM/DD) و اعداد را بررسی کنید.")
+            self.summary_label.setText("خطا در مقادیر ورودی. لطفا فرمت‌ها را بررسی کنید.")
+
+    def save_loan(self):
+        try:
+            person_id = self.customer_combo.currentData()
+            fund_id = self.cashbox_combo.currentData()
+            amount = int(self.amount_input.text().replace(",", ""))
+            loan_term = int(self.term_input.text())
+            interest_rate = float(self.interest_input.text())
+            penalty_rate = float(self.penalty_input.text() or 0)
+            
+            # `start_date` تاریخ اولین قسط است
+            start_date = self.start_date_input.text() 
+            # `loan_date` تاریخ پرداخت وام است
+            loan_date = self.transaction_date_input.text() 
+            
+            description = self.description_input.text() or f"پرداخت وام به {self.customer_combo.currentText()}"
+
+            if not all([person_id, fund_id, amount > 0, loan_term > 0, start_date, loan_date]):
+                QMessageBox.warning(self, "خطای ورودی", "لطفا تمام فیلدهای اصلی را به درستی پر کنید.")
+                return
+
+            installments_data = []
+            installment_amount = self.total_loan_amount_with_interest / loan_term
+            start_date_jalali = jdatetime.date(*map(int, start_date.split('/')))
+            for i in range(loan_term):
+                due_date_jalali = add_months_jalali(start_date_jalali, i)
+                installments_data.append({
+                    'due_date': due_date_jalali.strftime('%Y/%m/%d'),
+                    'amount_due': installment_amount
+                })
+            
+            end_date = installments_data[-1]['due_date'] if installments_data else start_date
+
+            loan_data = {
+                'person_id': person_id, 'fund_id': fund_id, 'amount': amount,
+                'loan_term': loan_term, 'interest_rate': interest_rate,
+                'penalty_rate': penalty_rate,
+                'loan_date': loan_date, 
+                'end_date': end_date,
+                'remain_amount': self.total_loan_amount_with_interest,
+                'description': description
+            }
+
+            success, message = self.db_manager.create_loan_and_installments(loan_data, installments_data)
+
+            if success:
+                QMessageBox.information(self, "موفقیت", "وام و اقساط با موفقیت ثبت شد.")
+                self.refresh_data()
+            else:
+                QMessageBox.critical(self, "خطای پایگاه داده", message)
+
+        except (ValueError, IndexError) as e:
+            QMessageBox.warning(self, "خطای ورودی", f"مقادیر وارد شده نامعتبر است. لطفا فیلدها را بررسی کنید.\n{e}")
+
+
+
+
+
+
+
+
+
+

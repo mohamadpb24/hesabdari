@@ -1,4 +1,4 @@
-# dashboard_panel.py
+# dashboard_panel.py (نسخه نهایی و اصلاح شده)
 import jdatetime
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QGridLayout, QLabel, 
@@ -11,7 +11,7 @@ from PyQt5.QtSvg import QSvgRenderer
 from db_manager import DatabaseManager
 from utils import format_money
 
-# --- SVG Icons (Embedded for portability) ---
+# --- SVG Icons (این بخش بدون تغییر باقی می‌ماند) ---
 SVG_ICONS = {
     "balance": """<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12V7H5a2 2 0 0 1 0-4h14v4"/><path d="M3 5v14a2 2 0 0 0 2 2h16v-5"/><path d="M18 12a2 2 0 0 0 0 4h4v-4Z"/></svg>""",
     "loan_principal": """<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" x2="12" y1="2" y2="22"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>""",
@@ -26,6 +26,7 @@ SVG_ICONS = {
 }
 
 class StatCard(QFrame):
+    # ... (این کلاس بدون تغییر باقی می‌ماند)
     def __init__(self, title, icon_svg, gradient_colors):
         super().__init__()
         self.gradient_colors = gradient_colors
@@ -88,6 +89,7 @@ class StatCard(QFrame):
     def set_value(self, text):
         self.value_label.setText(text)
 
+
 class DashboardPanel(QWidget):
     def __init__(self):
         super().__init__()
@@ -102,7 +104,6 @@ class DashboardPanel(QWidget):
     def build_ui(self):
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
-        # --- تغییر کلیدی: پس‌زمینه دارک ---
         scroll_area.setStyleSheet("QScrollArea { border: none; background-color: #111827; }")
         self.main_layout.addWidget(scroll_area)
 
@@ -112,17 +113,15 @@ class DashboardPanel(QWidget):
         container_layout.setSpacing(20)
         scroll_area.setWidget(container)
 
-        # --- Header ---
+        # Header
         header_layout = QHBoxLayout()
         title_label = QLabel("داشبورد مدیریتی")
         title_label.setFont(QFont("B Yekan", 20, QFont.Bold))
-        # --- تغییر کلیدی: رنگ متن روشن ---
         title_label.setStyleSheet("color: #e5e7eb;")
         
         today = jdatetime.date.today()
         date_label = QLabel(today.strftime("%A, %d %B %Y"))
         date_label.setFont(QFont("B Yekan", 11))
-        # --- تغییر کلیدی: رنگ متن روشن ---
         date_label.setStyleSheet("color: #9ca3af;")
         date_label.setAlignment(Qt.AlignRight)
 
@@ -131,13 +130,12 @@ class DashboardPanel(QWidget):
         header_layout.addWidget(date_label)
         container_layout.addLayout(header_layout)
 
-        # --- Grid Layout for Cards ---
+        # Grid Layout for Cards
         grid_layout = QGridLayout()
         grid_layout.setSpacing(20)
         container_layout.addLayout(grid_layout)
         container_layout.addStretch()
 
-        # --- تغییر کلیدی: پالت رنگی دارک برای کارت‌ها ---
         card_definitions = [
             {"key": "total_balance", "title": "موجودی کل صندوق‌ها", "icon": "balance", "colors": ["#10b981", "#059669"]},
             {"key": "total_loan_principal", "title": "کل سرمایه در گردش", "icon": "loan_principal", "colors": ["#3b82f6", "#2563eb"]},
@@ -151,7 +149,6 @@ class DashboardPanel(QWidget):
             {"key": "total_customers", "title": "تعداد کل مشتریان", "icon": "customers", "colors": ["#0ea5e9", "#0284c7"]},
         ]
 
-        # --- Create and place cards in the grid ---
         row, col = 0, 0
         for definition in card_definitions:
             card = StatCard(definition["title"], SVG_ICONS[definition["icon"]], definition["colors"])
@@ -170,13 +167,10 @@ class DashboardPanel(QWidget):
             self.cards["total_loan_principal"].set_value(format_money(stats['total_loan_principal']))
             self.cards["total_receivables"].set_value(format_money(stats['total_receivables']))
             self.cards["total_expenses"].set_value(format_money(stats.get('total_expenses', 0)))
-            
-            # --- تغییر کلیدی: کل سود برابر است با سود پیش‌بینی شده ---
             self.cards["total_projected_profit"].set_value(format_money(stats['total_projected_profit']))
             self.cards["realized_profit"].set_value(format_money(stats['realized_profit']))
             self.cards["unrealized_profit"].set_value(format_money(stats['unrealized_profit']))
-
             self.cards["active_loans"].set_value(f"{stats['active_loans']} وام")
             self.cards["settled_loans"].set_value(f"{stats['settled_loans']} وام")
+            # --- اصلاح شد: استفاده از کلید 'total_customers' ---
             self.cards["total_customers"].set_value(f"{stats['total_customers']} نفر")
-
