@@ -420,6 +420,51 @@ class DatabaseManager:
     def create_loan_and_installments(self, loan_data: Dict, installments_data: List[Dict]) -> Tuple[bool, str]:
         loan_uuid = str(uuid.uuid4())
         loan_code = self._generate_loan_code()
+        payment_code = self._get_next_payment_code('LoanPayment')
+
+        operations = [
+            # ۱. ثبت اطلاعات کلی وام
+            {'query': "INSERT INTO [Loans] (ID, Code, Person_ID, Fund_ID, Status, Amount, LoanTerm, InterestRate, PenaltyRate, LoanDate, EndDate, RemainAmount) VALUES (?, ?, ?, ?, 'ACTIVE', ?, ?, ?, ?, ?, ?, ?)",
+             'params': (loan_uuid, loan_code, loan_data['person_id'], loan_data['fund_id'], loan_data['amount'],
+                           loan_data['loan_term'], loan_data['interest_rate'], loan_data['penalty_rate'],
+                           loan_data['loan_date'], loan_data['end_date'], loan_data['remain_amount'])},
+
+            # ۲. کاهش موجودی صندوق
+            {'query': "UPDATE [Funds] SET Inventory = Inventory - ? WHERE ID = ?",
+             'params': (loan_data['amount'], loan_data['fund_id'])},
+
+            # ۳. ثبت تراکنش پرداخت وام
+            {'query': "INSERT INTO [Payments] (ID, Code, Fund_ID, Person_ID, Installment_ID, PaymentDate, Amount, Description, PaymentType) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'LoanPayment')",
+             'params': (str(uuid.uuid4()), payment_code, loan_data['fund_id'], loan_data['person_id'], None,
+                           loan_data['loan_date'], loan_data['amount'], loan_data['description'])}
+        ]
+
+        # ۴. ثبت اقساط با مقادیر اولیه صحیح
+        for i, inst in enumerate(installments_data):
+            installment_number = str(i + 1).zfill(2)
+            installment_code = f"{loan_code}-{installment_number}"
+            
+            # --- شروع تغییرات کلیدی ---
+            # مقادیر اولیه را اینجا تنظیم می‌کنیم
+            due_amount = inst['amount_due']
+            
+            operations.append({
+                'query': """
+                    INSERT INTO [Installments] 
+                        (ID, Code, Loan_ID, Person_ID, Status, DueDate, DueAmount, PaidAmount, 
+                         PaymentRemain, PenaltyDays, PenaltyAmount, TotalAmount) 
+                    VALUES (?, ?, ?, ?, 'PENDING', ?, ?, 0, ?, 0, 0, ?)
+                """,
+                # مقادیر به ترتیب ستون‌ها:
+                # PaymentRemain و TotalAmount هر دو در ابتدا برابر با DueAmount هستند
+                'params': (str(uuid.uuid4()), installment_code, loan_uuid, loan_data['person_id'], 
+                           inst['due_date'], due_amount, due_amount, due_amount)
+            })
+            # --- پایان تغییرات کلیدی ---
+        
+        return self._execute_transactional_operations(operations)
+        loan_uuid = str(uuid.uuid4())
+        loan_code = self._generate_loan_code()
         # --- اصلاح شد: ارسال نوع پرداخت 'LoanPayment' برای تولید کد با پیشوند ۱ ---
         payment_code = self._get_next_payment_code('LoanPayment')
 
@@ -461,9 +506,21 @@ class DatabaseManager:
         return self._execute_query(query, (person_id,), fetch='all', dictionary=False)
 
     def get_loan_installments(self, loan_id: str) -> list:
-        query = "SELECT ID, Code, DueDate, DueAmount, PaidAmount, PaymentDate, Status, PaymentRemain FROM [Installments] WHERE Loan_ID = ? ORDER BY DueDate ASC"
-        # --- اصلاح کلیدی: dictionary=True تضمین می‌کند خروجی همیشه دیکشنری باشد ---
-        return self._execute_query(query, (loan_id,), fetch='all', dictionary=True)
+        """
+        اطلاعات کامل اقساط یک وام، شامل جزئیات جریمه را برمی‌گرداند.
+        """
+        # --- اصلاح کلیدی: ستون‌های جدید به کوئری اضافه شده‌اند ---
+        query = """
+            SELECT
+                ID, Code, DueDate, DueAmount, PaidAmount, PaymentDate, Status,
+                PaymentRemain, PenaltyDays, PenaltyAmount, TotalAmount
+            FROM [Installments]
+            WHERE Loan_ID = ?
+            ORDER BY DueDate ASC
+        """
+        installments = self._execute_query(query, (loan_id,), fetch='all', dictionary=True)
+        # همیشه یک لیست خالی برگردان تا از خطاهای بعدی جلوگیری شود
+        return installments if installments else []
 
 
     def get_installment_details(self, installment_id: str) -> Optional[Dict[str, Any]]:
@@ -471,27 +528,58 @@ class DatabaseManager:
         return self._execute_query(query, (installment_id,), fetch='one')
 
     def pay_installment(self, person_id: str, installment_id: str, amount_paid: float, fund_id: str, description: str, payment_date: str) -> Tuple[bool, str]:
-        inst_details = self.get_installment_details(installment_id)
-        if not inst_details: return False, "قسط یافت نشد."
+        """
+        پرداخت برای یک قسط را ثبت کرده و مقادیر بدهی را بر اساس منطق جدید به‌روزرسانی می‌کند.
+        """
+        # مرحله ۱: دریافت آخرین وضعیت قسط از دیتابیس
+        # (جریمه‌ها توسط اسکریپت روزانه از قبل آپدیت شده‌اند)
+        inst_details = self._execute_query(
+            "SELECT ID, Loan_ID, DueAmount, PaidAmount, PenaltyAmount FROM [Installments] WHERE ID = ?",
+            (installment_id,),
+            fetch='one'
+        )
+        if not inst_details:
+            return False, "قسط یافت نشد."
 
-        new_paid_amount = inst_details['PaidAmount'] + Decimal(str(amount_paid))
-        new_remaining = inst_details['DueAmount'] - new_paid_amount
-        new_status = 'PAID' if new_remaining <= 0 else 'PARTIALLY_PAID'
+        # مقادیر را برای جلوگیری از خطا در صورت NULL بودن، با صفر جایگزین می‌کنیم
+        due_amount = inst_details.get('DueAmount') or Decimal(0)
+        paid_amount_before = inst_details.get('PaidAmount') or Decimal(0)
+        penalty_amount = inst_details.get('PenaltyAmount') or Decimal(0)
         
-        # --- اصلاح شد: ارسال نوع پرداخت 'InstallmentPayment' برای تولید کد با پیشوند ۲ ---
+        amount_paid_now = Decimal(str(amount_paid))
+
+        # مرحله ۲: محاسبه مقادیر جدید بر اساس منطق شما
+        # الف) محاسبه کل مبلغ پرداخت شده جدید
+        new_paid_amount = paid_amount_before + amount_paid_now
+
+        # ب) محاسبه بدهی کل (توتال امانت)
+        new_total_amount = due_amount + penalty_amount
+
+        # ج) محاسبه باقیمانده نهایی (پیمنت ریمین)
+        new_payment_remain = new_total_amount - new_paid_amount
+
+        # د) تعیین وضعیت جدید قسط
+        new_status = 'PAID' if new_payment_remain <= 0 else 'PARTIALLY_PAID'
+        
+        # تولید کد پرداخت جدید
         payment_code = self._get_next_payment_code('InstallmentPayment')
 
+        # مرحله ۳: آماده‌سازی عملیات برای ثبت در دیتابیس به صورت یک تراکنش واحد
         operations = [
+            # ۱. ثبت جزئیات پرداخت در جدول Payments
             {'query': "INSERT INTO [Payments] (ID, Code, Fund_ID, Person_ID, Installment_ID, PaymentDate, Amount, Description, PaymentType) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'InstallmentPayment')",
-             'params': (str(uuid.uuid4()), payment_code, fund_id, person_id, installment_id, payment_date, amount_paid, description)},
+             'params': (str(uuid.uuid4()), payment_code, fund_id, person_id, installment_id, payment_date, amount_paid_now, description)},
             
-            {'query': "UPDATE [Installments] SET PaidAmount = ?, PaymentRemain = ?, Status = ?, PaymentDate = ? WHERE ID = ?",
-             'params': (new_paid_amount, new_remaining, new_status, payment_date, installment_id)},
+            # ۲. به‌روزرسانی جدول اقساط با تمام مقادیر محاسبه شده جدید
+            {'query': "UPDATE [Installments] SET PaidAmount = ?, TotalAmount = ?, PaymentRemain = ?, Status = ?, PaymentDate = ? WHERE ID = ?",
+             'params': (new_paid_amount, new_total_amount, new_payment_remain, new_status, payment_date, installment_id)},
             
-            {'query': "UPDATE [Funds] SET Inventory = Inventory + ? WHERE ID = ?", 'params': (amount_paid, fund_id)},
+            # ۳. افزایش موجودی صندوق
+            {'query': "UPDATE [Funds] SET Inventory = Inventory + ? WHERE ID = ?", 'params': (amount_paid_now, fund_id)},
 
+            # ۴. کاهش باقیمانده کل وام
             {'query': "UPDATE [Loans] SET RemainAmount = RemainAmount - ? WHERE ID = ?",
-             'params': (amount_paid, inst_details['Loan_ID'])}
+             'params': (amount_paid_now, inst_details['Loan_ID'])}
         ]
         
         return self._execute_transactional_operations(operations)

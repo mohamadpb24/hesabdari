@@ -69,17 +69,24 @@ class InstallmentPanel(QWidget):
         self.lbl_installment_amount = QLabel("..."); self.lbl_installment_amount.setObjectName("header-value")
         self.lbl_loan_term = QLabel("..."); self.lbl_loan_term.setObjectName("header-value")
 
+        self.lbl_total_penalty = QLabel("..."); self.lbl_total_penalty.setObjectName("header-value")
+        self.lbl_total_penalty.setStyleSheet("color: #c0392b;") # رنگ قرمز برای جریمه
+
         header_grid.addWidget(QLabel("<b>مشتری:</b>"), 0, 0); header_grid.addWidget(self.lbl_person_name, 0, 1)
         header_grid.addWidget(QLabel("<b>کد وام:</b>"), 0, 2); header_grid.addWidget(self.lbl_loan_code, 0, 3)
         header_grid.addWidget(QLabel("<b>مبلغ کل وام:</b>"), 1, 0); header_grid.addWidget(self.lbl_total_amount, 1, 1)
-        header_grid.addWidget(QLabel("<b>باقی‌مانده کل:</b>"), 1, 2); header_grid.addWidget(self.lbl_remaining_balance, 1, 3)
+        header_grid.addWidget(QLabel("<b>مجموع باقیمانده:</b>"), 1, 2); header_grid.addWidget(self.lbl_remaining_balance, 1, 3)
+        header_grid.addWidget(QLabel("<b>مجموع جریمه:</b>"), 1, 4); header_grid.addWidget(self.lbl_total_penalty, 1, 5)        
         header_grid.addWidget(QLabel("<b>مبلغ هر قسط:</b>"), 2, 0); header_grid.addWidget(self.lbl_installment_amount, 2, 1)
         header_grid.addWidget(QLabel("<b>تعداد اقساط:</b>"), 2, 2); header_grid.addWidget(self.lbl_loan_term, 2, 3)
         header_grid.setColumnStretch(1, 1); header_grid.setColumnStretch(3, 1)
 
         self.installments_table = QTableWidget()
-        self.installments_table.setColumnCount(7)
-        self.installments_table.setHorizontalHeaderLabels(["کد قسط", "تاریخ سررسید", "مبلغ قسط", "پرداختی", "باقی‌مانده", "وضعیت", "عملیات"])
+        self.installments_table.setColumnCount(8)
+        self.installments_table.setHorizontalHeaderLabels([
+            "کد قسط", "سررسید", "مبلغ قسط", "پرداختی", 
+            "جریمه این قسط", "باقیمانده کل", "وضعیت", "عملیات"
+        ])
         self.installments_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.installments_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.installments_table.setAlternatingRowColors(True)
@@ -124,6 +131,8 @@ class InstallmentPanel(QWidget):
         self.installments_table.setRowCount(0)
         self.settle_loan_btn.setEnabled(False)
 
+# لطفاً کل این تابع را با کد زیر جایگزین کنید
+
     def load_loan_installments(self):
         self.current_loan_id = self.loan_combo.currentData()
         if not self.current_loan_id:
@@ -135,7 +144,6 @@ class InstallmentPanel(QWidget):
             self.lbl_person_name.setText(header_data.get('person_name', 'N/A'))
             self.lbl_loan_code.setText(str(header_data.get('loan_code', 'N/A')))
             self.lbl_total_amount.setText(format_money(header_data.get('total_amount', 0)))
-            self.lbl_remaining_balance.setText(format_money(header_data.get('remaining_balance', 0)))
             self.lbl_installment_amount.setText(format_money(header_data.get('installment_amount', 0)))
             self.lbl_loan_term.setText(f"{header_data.get('loan_term', 0)} ماه")
             self.loan_header_group.setVisible(True)
@@ -143,27 +151,193 @@ class InstallmentPanel(QWidget):
 
         installments = self.db_manager.get_loan_installments(self.current_loan_id)
         self.installments_table.setRowCount(0)
+        
+        total_payment_remain = 0
+        total_penalty_amount = 0
+
         if installments:
             for row, inst in enumerate(installments):
                 self.installments_table.insertRow(row)
-                self.installments_table.setItem(row, 0, QTableWidgetItem(str(inst['Code'])))
-                self.installments_table.setItem(row, 1, QTableWidgetItem(str(inst['DueDate'])))
-                self.installments_table.setItem(row, 2, QTableWidgetItem(format_money(inst['DueAmount'])))
-                self.installments_table.setItem(row, 3, QTableWidgetItem(format_money(inst['PaidAmount'])))
-                self.installments_table.setItem(row, 4, QTableWidgetItem(format_money(inst['PaymentRemain'])))
+                
+                # --- شروع بخش ایمن‌سازی در برابر None ---
+                # مقادیر را می‌خوانیم و اگر None بودند، آنها را به صفر تبدیل می‌کنیم
+                due_amount = inst.get('DueAmount') or 0
+                paid_amount = inst.get('PaidAmount') or 0
+                penalty_amount = inst.get('PenaltyAmount') or 0
+                # در دیتابیس جدید شما، PaymentRemain همان باقیمانده کل است
+                payment_remain = inst.get('PaymentRemain') or 0 
+                status = inst.get('Status', 'N/A')
+                code = inst.get('Code', 'N/A')
+                due_date = inst.get('DueDate', 'N/A')
+                # --- پایان بخش ایمن‌سازی ---
 
-                status_item = QTableWidgetItem(inst['Status'])
-                if inst['Status'] == 'PAID':
+                self.installments_table.setItem(row, 0, QTableWidgetItem(str(code)))
+                self.installments_table.setItem(row, 1, QTableWidgetItem(str(due_date)))
+                self.installments_table.setItem(row, 2, QTableWidgetItem(format_money(due_amount)))
+                self.installments_table.setItem(row, 3, QTableWidgetItem(format_money(paid_amount)))
+                
+                penalty_amount_item = QTableWidgetItem(format_money(penalty_amount))
+                if penalty_amount > 0: # این مقایسه اکنون امن است
+                    penalty_amount_item.setForeground(QColor("#c0392b"))
+                self.installments_table.setItem(row, 4, penalty_amount_item)
+                
+                self.installments_table.setItem(row, 5, QTableWidgetItem(format_money(payment_remain)))
+                
+                status_item = QTableWidgetItem(status)
+                if status == 'PAID':
                     status_item.setForeground(QColor("#27ae60"))
-                elif inst['Status'] == 'PARTIALLY_PAID':
+                elif status == 'PARTIALLY_PAID':
                     status_item.setForeground(QColor("#f39c12"))
-                self.installments_table.setItem(row, 5, status_item)
+                self.installments_table.setItem(row, 6, status_item)
 
-                if inst['Status'] != 'PAID':
+                if status != 'PAID':
+                    pay_btn = QPushButton("پرداخت")
+                    pay_btn.setStyleSheet("background-color: #3498db; color: white; border-radius: 5px; padding: 5px;")
+                    # اطمینان از اینکه داده‌های ارسالی به دیالوگ پرداخت هم None نیستند
+                    inst_safe = inst.copy()
+                    inst_safe['TotalRemain'] = payment_remain
+                    pay_btn.clicked.connect(lambda _, installment_data=inst_safe: self.show_pay_dialog(installment_data))
+                    self.installments_table.setCellWidget(row, 7, pay_btn)
+                
+                total_payment_remain += payment_remain
+                total_penalty_amount += penalty_amount
+
+        self.lbl_remaining_balance.setText(format_money(total_payment_remain))
+        self.lbl_total_penalty.setText(format_money(total_penalty_amount))
+        self.current_loan_id = self.loan_combo.currentData()
+        if not self.current_loan_id:
+            self.clear_loan_data()
+            return
+
+        header_data = self.db_manager.get_loan_header_details(self.current_loan_id)
+        if header_data:
+            self.lbl_person_name.setText(header_data.get('person_name', 'N/A'))
+            self.lbl_loan_code.setText(str(header_data.get('loan_code', 'N/A')))
+            self.lbl_total_amount.setText(format_money(header_data.get('total_amount', 0)))
+            self.lbl_installment_amount.setText(format_money(header_data.get('installment_amount', 0)))
+            self.lbl_loan_term.setText(f"{header_data.get('loan_term', 0)} ماه")
+            self.loan_header_group.setVisible(True)
+            self.settle_loan_btn.setEnabled(True)
+
+        installments = self.db_manager.get_loan_installments(self.current_loan_id)
+        self.installments_table.setRowCount(0)
+        
+        total_payment_remain = 0
+        total_penalty_amount = 0
+
+        if installments:
+            for row, inst in enumerate(installments):
+                self.installments_table.insertRow(row)
+                
+                # --- شروع بخش ایمن‌سازی در برابر None ---
+                # مقادیر را می‌خوانیم و اگر None بودند، آنها را به صفر تبدیل می‌کنیم
+                due_amount = inst.get('DueAmount') or 0
+                paid_amount = inst.get('PaidAmount') or 0
+                penalty_amount = inst.get('PenaltyAmount') or 0
+                # در دیتابیس جدید شما، PaymentRemain همان باقیمانده کل است
+                payment_remain = inst.get('PaymentRemain') or 0 
+                status = inst.get('Status', 'N/A')
+                code = inst.get('Code', 'N/A')
+                due_date = inst.get('DueDate', 'N/A')
+                # --- پایان بخش ایمن‌سازی ---
+
+                self.installments_table.setItem(row, 0, QTableWidgetItem(str(code)))
+                self.installments_table.setItem(row, 1, QTableWidgetItem(str(due_date)))
+                self.installments_table.setItem(row, 2, QTableWidgetItem(format_money(due_amount)))
+                self.installments_table.setItem(row, 3, QTableWidgetItem(format_money(paid_amount)))
+                
+                penalty_amount_item = QTableWidgetItem(format_money(penalty_amount))
+                if penalty_amount > 0: # این مقایسه اکنون امن است
+                    penalty_amount_item.setForeground(QColor("#c0392b"))
+                self.installments_table.setItem(row, 4, penalty_amount_item)
+                
+                self.installments_table.setItem(row, 5, QTableWidgetItem(format_money(payment_remain)))
+                
+                status_item = QTableWidgetItem(status)
+                if status == 'PAID':
+                    status_item.setForeground(QColor("#27ae60"))
+                elif status == 'PARTIALLY_PAID':
+                    status_item.setForeground(QColor("#f39c12"))
+                self.installments_table.setItem(row, 6, status_item)
+
+                if status != 'PAID':
+                    pay_btn = QPushButton("پرداخت")
+                    pay_btn.setStyleSheet("background-color: #3498db; color: white; border-radius: 5px; padding: 5px;")
+                    # اطمینان از اینکه داده‌های ارسالی به دیالوگ پرداخت هم None نیستند
+                    inst_safe = inst.copy()
+                    inst_safe['TotalRemain'] = payment_remain
+                    pay_btn.clicked.connect(lambda _, installment_data=inst_safe: self.show_pay_dialog(installment_data))
+                    self.installments_table.setCellWidget(row, 7, pay_btn)
+                
+                total_payment_remain += payment_remain
+                total_penalty_amount += penalty_amount
+
+        self.lbl_remaining_balance.setText(format_money(total_payment_remain))
+        self.lbl_total_penalty.setText(format_money(total_penalty_amount)) 
+        self.current_loan_id = self.loan_combo.currentData()
+        if not self.current_loan_id:
+            self.clear_loan_data()
+            return
+
+        header_data = self.db_manager.get_loan_header_details(self.current_loan_id)
+        if header_data:
+            self.lbl_person_name.setText(header_data.get('person_name', 'N/A'))
+            self.lbl_loan_code.setText(str(header_data.get('loan_code', 'N/A')))
+            self.lbl_total_amount.setText(format_money(header_data.get('total_amount', 0)))
+            self.lbl_installment_amount.setText(format_money(header_data.get('installment_amount', 0)))
+            self.lbl_loan_term.setText(f"{header_data.get('loan_term', 0)} ماه")
+            self.loan_header_group.setVisible(True)
+            self.settle_loan_btn.setEnabled(True)
+
+        installments = self.db_manager.get_loan_installments(self.current_loan_id)
+        self.installments_table.setRowCount(0)
+        
+        total_payment_remain = 0
+        total_penalty_amount = 0
+
+        if installments:
+            for row, inst in enumerate(installments):
+                self.installments_table.insertRow(row)
+                
+                # --- استفاده از .get() برای جلوگیری از خطا ---
+                due_amount = inst.get('DueAmount', 0)
+                paid_amount = inst.get('PaidAmount', 0)
+                penalty_amount = inst.get('PenaltyAmount', 0)
+                payment_remain = inst.get('PaymentRemain', 0) # این همان باقیمانده کل است
+                status = inst.get('Status', 'N/A')
+                code = inst.get('Code', 'N/A')
+                due_date = inst.get('DueDate', 'N/A')
+
+                self.installments_table.setItem(row, 0, QTableWidgetItem(str(code)))
+                self.installments_table.setItem(row, 1, QTableWidgetItem(str(due_date)))
+                self.installments_table.setItem(row, 2, QTableWidgetItem(format_money(due_amount)))
+                self.installments_table.setItem(row, 3, QTableWidgetItem(format_money(paid_amount)))
+                
+                penalty_amount_item = QTableWidgetItem(format_money(penalty_amount))
+                if penalty_amount > 0:
+                    penalty_amount_item.setForeground(QColor("#c0392b"))
+                self.installments_table.setItem(row, 4, penalty_amount_item)
+                
+                self.installments_table.setItem(row, 5, QTableWidgetItem(format_money(payment_remain)))
+                
+                status_item = QTableWidgetItem(status)
+                if status == 'PAID':
+                    status_item.setForeground(QColor("#27ae60"))
+                elif status == 'PARTIALLY_PAID':
+                    status_item.setForeground(QColor("#f39c12"))
+                self.installments_table.setItem(row, 6, status_item)
+
+                if status != 'PAID':
                     pay_btn = QPushButton("پرداخت")
                     pay_btn.setStyleSheet("background-color: #3498db; color: white; border-radius: 5px; padding: 5px;")
                     pay_btn.clicked.connect(lambda _, installment_data=inst: self.show_pay_dialog(installment_data))
-                    self.installments_table.setCellWidget(row, 6, pay_btn)
+                    self.installments_table.setCellWidget(row, 7, pay_btn)
+                
+                total_payment_remain += payment_remain
+                total_penalty_amount += penalty_amount
+
+        self.lbl_remaining_balance.setText(format_money(total_payment_remain))
+        self.lbl_total_penalty.setText(format_money(total_penalty_amount))
 
     def show_settlement_dialog(self):
         if not self.current_loan_id: return
