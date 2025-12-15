@@ -208,60 +208,194 @@ class CashboxPanel(QFrame):
         dialog.exec_()
     
     def show_transactions_dialog(self, fund_data):
-        fund_id, fund_name, _ = fund_data
+        try:
+            fund_id = fund_data['ID']
+            fund_name = fund_data['Name']
+        except (TypeError, IndexError, KeyError):
+            fund_id = fund_data[0]
+            fund_name = fund_data[1]
+
         dialog = QDialog(self)
-        dialog.setWindowTitle(f"گردش حساب صندوق: {fund_name}")
-        dialog.setMinimumSize(800, 600)
-        
-        dialog.setStyleSheet("QDialog { background-color: #ffffff; }")
+        dialog.setWindowTitle(f"تراکنش‌های صندوق: {fund_name}")
+        dialog.setMinimumSize(1100, 650)
         
         layout = QVBoxLayout(dialog)
-        table = QTableWidget()
-        table.setColumnCount(5)
-        table.setHorizontalHeaderLabels(["تاریخ", "نوع تراکنش", "مبلغ", "طرف حساب", "شرح"])
-        table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         
-        transactions = self.db_manager.get_fund_transactions(fund_id)
-        if transactions:
-            table.setRowCount(len(transactions))
+        table = QTableWidget()
+        table.setColumnCount(7) 
+        table.setHorizontalHeaderLabels(["تاریخ", "نوع", "طرف حساب", "شرح", "مبلغ", "مانده صندوق", "عملیات"])
+        table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        table.horizontalHeader().setSectionResizeMode(6, QHeaderView.ResizeToContents)
+        table.setAlternatingRowColors(True)
+        table.setStyleSheet("QTableWidget { background-color: white; font-size: 13px; }")
+        
+        # 1. دریافت تراکنش‌ها (از قدیم به جدید - ASC)
+        raw_transactions = self.db_manager.get_fund_transactions(fund_id)
+        
+        processed_rows = []
+        running_balance = 0.0 # شروع محاسبه از صفر
+        
+        for trans in raw_transactions:
+            amount = float(trans['Amount'])
+            p_type = str(trans['Type']) # تبدیل به رشته برای اطمینان
+            p_id = trans['ID']
+            t_fund_id = trans['Fund_ID']
             
-            # --- شروع اصلاحات کلیدی ---
-            # ۱. دیکشنری برای ترجمه نوع تراکنش
+            # --- تشخیص دقیق ورودی/خروجی (اصلاح شده) ---
+            is_income = False
+            
+            # لیست تمام حالت‌هایی که پول از صندوق خارج می‌شود (خروجی -)
+            output_types = [
+                'LoanPayment',        # پرداخت وام
+                'Expense',            # هزینه
+                'StorePayment',       # پرداخت به فروشگاه
+                'ManualPayment',      # پرداخت دستی (حروف بزرگ)
+                'manual_payment',     # پرداخت دستی (حروف کوچک)
+                'payment_to_customer' # محض احتیاط
+            ]
+            
+            if p_type in output_types:
+                is_income = False
+            elif p_type == 'transfer' and t_fund_id == fund_id:
+                # اگر در انتقال، ما فرستنده باشیم -> خروجی
+                is_income = False
+            else:
+                # بقیه موارد ورودی هستند (+)
+                # شامل: InstallmentPayment, Settlement, CapitalInjection, ManualReceipt
+                is_income = True
+
+            # --- محاسبه ریاضی (مستقیم) ---
+            if is_income:
+                running_balance += amount
+                sign = "+"
+                color_text = QColor("#27ae60") # سبز
+            else:
+                running_balance -= amount
+                sign = "-"
+                color_text = QColor("#c0392b") # قرمز
+
+            # --- ترجمه برای نمایش ---
             type_map = {
                 'LoanPayment': 'پرداخت وام',
                 'InstallmentPayment': 'دریافت قسط',
-                'ManualPayment': 'پرداخت دستی',
-                'ManualReceipt': 'دریافت دستی',
-                'transfer': 'صندوق به صندوق',
+                'TransfertoStore': 'انتقال اعتباری',
+                'StorePayment': 'پرداخت به فروشگاه',
                 'Expense': 'هزینه',
-                'CapitalInjection': 'افزایش سرمایه',
-                'Settlement': 'تسویه کامل وام'
+                'Settlement': 'تسویه وام',
+                'transfer': 'انتقال وجه',
+                'manual_payment': 'پرداخت دستی',
+                'ManualPayment': 'پرداخت دستی',
+                'manual_receipt': 'دریافت دستی',
+                'ManualReceipt': 'دریافت دستی',
+                'capital_injection': 'افزایش سرمایه',
+                'CapitalInjection': 'افزایش سرمایه'
             }
-            # --- پایان اصلاحات کلیدی ---
+            display_type = type_map.get(p_type, p_type)
+            if p_type == 'transfer':
+                display_type += " (ورودی)" if is_income else " (خروجی)"
 
-            for row, trans in enumerate(transactions):
-                amount_item = QTableWidgetItem(format_money(trans['Amount']))
-                if trans['Flow'] == 'ورودی':
-                    amount_item.setForeground(QColor("#27ae60"))
-                else:
-                    amount_item.setForeground(QColor("#c0392b"))
-                
-                # --- اصلاح شد: استفاده از دیکشنری برای نمایش نام فارسی ---
-                persian_type = type_map.get(trans['Type'], trans['Type'])
+            # ذخیره در لیست موقت
+            processed_rows.append({
+                'date': trans['Date'],
+                'type': display_type,
+                'party': trans['Counterparty'] or '-',
+                'desc': trans['Description'],
+                'amount_str': f"{sign} {format_money(amount)}",
+                'amount_color': color_text,
+                'balance': running_balance,
+                'raw_type': p_type,
+                'id': p_id
+            })
 
-                table.setItem(row, 0, QTableWidgetItem(str(trans['Date'])))
-                table.setItem(row, 1, QTableWidgetItem(persian_type)) # <-- اینجا از نام فارسی استفاده می‌شود
-                table.setItem(row, 2, amount_item)
-                table.setItem(row, 3, QTableWidgetItem(trans.get('Counterparty', '')))
-                table.setItem(row, 4, QTableWidgetItem(trans['Description']))
+        # 2. نمایش در جدول (معکوس: جدیدترین‌ها بالا)
+        final_rows = processed_rows[::-1]
+        table.setRowCount(len(final_rows))
         
+        for row, data in enumerate(final_rows):
+            table.setItem(row, 0, QTableWidgetItem(str(data['date'])))
+            table.setItem(row, 1, QTableWidgetItem(data['type']))
+            table.setItem(row, 2, QTableWidgetItem(str(data['party'])))
+            table.setItem(row, 3, QTableWidgetItem(str(data['desc'])))
+            
+            # مبلغ
+            amount_item = QTableWidgetItem(data['amount_str'])
+            amount_item.setForeground(data['amount_color'])
+            amount_item.setFont(QFont("B Yekan", 10, QFont.Bold))
+            table.setItem(row, 4, amount_item)
+            
+            # مانده
+            bal_val = data['balance']
+            balance_item = QTableWidgetItem(format_money(bal_val))
+            balance_item.setFont(QFont("B Yekan", 10, QFont.Bold))
+            if bal_val < 0:
+                balance_item.setForeground(QColor("#c0392b"))
+            else:
+                balance_item.setForeground(QColor("black"))
+            table.setItem(row, 5, balance_item)
+
+            # دکمه حذف
+            editable_types = ['transfer', 'manual_payment', 'manual_receipt', 'capital_injection', 
+                              'ManualPayment', 'ManualReceipt', 'CapitalInjection']
+            
+            if data['raw_type'] in editable_types:
+                del_btn = QPushButton("حذف")
+                del_btn.setCursor(Qt.PointingHandCursor)
+                del_btn.setStyleSheet("background-color: #e74c3c; color: white; border-radius: 4px; font-size: 11px; padding: 3px;")
+                del_btn.clicked.connect(lambda _, pid=data['id'], d=dialog: self.delete_transaction(pid, d))
+                
+                widget = QWidget(); l = QHBoxLayout(widget); l.setContentsMargins(2,2,2,2); l.setAlignment(Qt.AlignCenter)
+                l.addWidget(del_btn)
+                table.setCellWidget(row, 6, widget)
+
         layout.addWidget(table)
+        
+        # بخش هشدار اختلاف موجودی
+        current_inv_db = self.db_manager._execute_query("SELECT Inventory FROM Funds WHERE ID = ?", (fund_id,), fetch='one')
+        real_db_balance = float(current_inv_db['Inventory']) if current_inv_db else 0.0
+        calculated_balance = processed_rows[-1]['balance'] if processed_rows else 0.0
+        
+        # اگر اختلاف بیشتر از 1000 تومان بود
+        if abs(real_db_balance - calculated_balance) > 1000:
+            msg_frame = QWidget()
+            msg_layout = QHBoxLayout(msg_frame)
+            lbl_warning = QLabel(f"هشدار: موجودی دیتابیس ({format_money(real_db_balance)}) با جمع تراکنش‌ها ({format_money(calculated_balance)}) همخوانی ندارد.")
+            lbl_warning.setStyleSheet("color: #c0392b; font-weight: bold;")
+            
+            fix_btn = QPushButton("همگام‌سازی موجودی")
+            fix_btn.setStyleSheet("background-color: #f39c12; color: white; font-weight: bold; padding: 5px 10px;")
+            fix_btn.clicked.connect(lambda: self.fix_fund_balance(fund_id, calculated_balance, dialog))
+            
+            msg_layout.addWidget(lbl_warning)
+            msg_layout.addWidget(fix_btn)
+            layout.addWidget(msg_frame)
+
         dialog.exec_()
 
+    # --- تابع تعمیر موجودی (اختیاری) ---
+    def fix_fund_balance(self, fund_id, correct_balance, dialog):
+        reply = QMessageBox.question(dialog, "تعمیر موجودی", 
+                                     f"آیا می‌خواهید موجودی صندوق را به {format_money(correct_balance)} تغییر دهید؟",
+                                     QMessageBox.Yes | QMessageBox.No)
+        if reply == QMessageBox.Yes:
+            self.db_manager._execute_query("UPDATE Funds SET Inventory = ? WHERE ID = ?", (correct_balance, fund_id), commit=True)
+            QMessageBox.information(dialog, "انجام شد", "موجودی اصلاح شد.")
+            dialog.close()
 
 
-
-
+    def delete_transaction(self, payment_id, dialog):
+            reply = QMessageBox.question(
+                dialog, "تایید حذف",
+                "آیا مطمئن هستید که می‌خواهید این تراکنش را حذف کنید؟\nموجودی صندوق اصلاح خواهد شد.",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No
+            )
+            if reply == QMessageBox.Yes:
+                success, msg = self.db_manager.delete_manual_transaction(payment_id)
+                if success:
+                    QMessageBox.information(dialog, "موفقیت", "تراکنش حذف شد.")
+                    dialog.accept() # بستن و باز کردن مجدد برای رفرش
+                    # نکته: برای تجربه بهتر می‌توانیم متد show_transactions_dialog را دوباره صدا بزنیم
+                else:
+                    QMessageBox.critical(dialog, "خطا", msg)
 
 
 

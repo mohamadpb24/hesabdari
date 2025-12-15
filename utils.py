@@ -2,7 +2,7 @@
 
 import jdatetime
 from PyQt5.QtCore import QDate
-
+from datetime import datetime as python_datetime # <-- ایمپورت جدید
 def format_money(value):
     try:
         # تبدیل مقدار به عدد صحیح و فرمت‌دهی با جداکننده هزارتایی
@@ -52,3 +52,51 @@ def add_months_jalali(date_jalali, months):
     new_day = min(day, last_day_of_month)
     
     return jdatetime.date(new_year, new_month, new_day)
+
+def normalize_numbers(text):
+    """تبدیل اعداد فارسی و جداکننده‌های فارسی به انگلیسی."""
+    if not isinstance(text, str):
+        text = str(text)
+    
+    # تبدیل ارقام فارسی به انگلیسی
+    mapping = str.maketrans('۰۱۲۳۴۵۶۷۸۹', '0123456789')
+    normalized_text = text.translate(mapping)
+    
+    # تبدیل جداکننده‌های هزارتایی و اعشاری فارسی به انگلیسی برای float شدن
+    # حذف جداکننده‌های هزارتایی (فارسی و انگلیسی)
+    normalized_text = normalized_text.replace("،", "")
+    normalized_text = normalized_text.replace(",", "")
+    # جایگزینی جداکننده اعشاری فارسی (٫) با نقطه
+    normalized_text = normalized_text.replace("٫", ".")
+    
+    return normalized_text
+
+def jalali_date_to_datetime_with_current_time(jalali_date_str: str) -> python_datetime:
+    """
+    تبدیل تاریخ شمسی (YYYY/MM/DD) به آبجکت datetime پایتون با ترکیب با زمان فعلی سیستم.
+    """
+    from jdatetime import datetime as jdatetime_datetime
+    
+    try:
+        # 1. نرمالایز کردن ارقام و پارس کردن تاریخ شمسی
+        normalized_date_str = normalize_numbers(jalali_date_str)
+        j_parts = [int(p) for p in normalized_date_str.split('/')]
+        j_date = jdatetime_datetime(j_parts[0], j_parts[1], j_parts[2]).date()
+        
+        # 2. گرفتن تاریخ میلادی معادل
+        g_date = j_date.togregorian()
+        
+        # 3. ترکیب با زمان دقیق فعلی
+        now = python_datetime.now()
+        
+        return python_datetime(g_date.year, g_date.month, g_date.day, 
+                               now.hour, now.minute, now.second, now.microsecond)
+    except Exception:
+        # در صورت بروز خطا در پارس کردن، تاریخ و زمان فعلی را برمی‌گرداند.
+        return python_datetime.now()
+
+
+
+
+
+        

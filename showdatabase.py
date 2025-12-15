@@ -5,15 +5,12 @@ from ttkbootstrap.constants import *
 from sqlalchemy import create_engine, inspect, text
 import pandas as pd
 import logging
+import configparser  # --- ۱. ایمپورت کتابخانه کانفیگ ---
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-DB_CONFIG = {
-    'host': '185.55.224.113',
-    'user': 'demodeln_Pezhvak',
-    'password': 'hlwO27*52',
-    'database': 'demodeln_PezhvakPay'
-}
+# --- ۲. حذف دیکشنری هارد-کد شده DB_CONFIG ---
+# DB_CONFIG = { ... }
 
 class ModernDatabaseViewer(ttk.Window):
     def __init__(self):
@@ -21,14 +18,35 @@ class ModernDatabaseViewer(ttk.Window):
         self.title("Modern Database Viewer (Multi-Delete Enabled)")
         self.geometry("1200x800")
         self.engine = None
+        
+        # --- ۳. خواندن کانفیگ در __init__ ---
+        try:
+            self.db_config = self._get_db_config()
+        except Exception as e:
+            ttk.dialogs.Messagebox.show_error(f"خطا در خواندن فایل config.ini:\n{e}", "Config Error")
+            self.destroy()
+            return
+
         self.connect_to_db()
-        self.default_font = font.nametofont("TkDefaultFont")
-        self.default_font.configure(family="Segoe UI", size=10)
         self.current_primary_key = None
         self.create_widgets()
         self.after(100, self.load_tables)
 
+    def _get_db_config(self):
+        """اطلاعات اتصال را از فایل config.ini می‌خواند."""
+        config = configparser.ConfigParser()
+        config.read('config.ini')
+        if 'sqlserver' not in config:
+            raise Exception("بخش [sqlserver] در فایل config.ini یافت نشد.")
+        
+        # بازگرداندن دیکشنری حاوی تنظیمات
+        return dict(config['sqlserver'])
+
     def create_widgets(self):
+        # --- (این بخش خطا-یابی شده و بدون تغییر نسبت به قبل است) ---
+        self.default_font = font.nametofont("TkDefaultFont")
+        self.default_font.configure(family="Segoe UI", size=10)
+        
         main_frame = ttk.Frame(self, padding=15)
         main_frame.pack(fill=BOTH, expand=YES)
         top_frame = ttk.Frame(main_frame)
@@ -40,7 +58,6 @@ class ModernDatabaseViewer(ttk.Window):
         table_container = ttk.Frame(main_frame)
         table_container.pack(fill=BOTH, expand=YES)
         
-        # --- تغییر مهم: فعال کردن انتخاب چندتایی ---
         self.tree = ttk.Treeview(table_container, show="headings", bootstyle="primary", selectmode="extended")
         
         vsb = ttk.Scrollbar(table_container, orient="vertical", command=self.tree.yview, bootstyle="round-info")
@@ -59,13 +76,21 @@ class ModernDatabaseViewer(ttk.Window):
         self.status_bar.pack(side=BOTTOM, fill=X)
 
     def connect_to_db(self):
+        # --- ۴. استفاده از self.db_config به جای DB_CONFIG ---
         try:
-            driver = "ODBC Driver 17 for SQL Server"
-            conn_str = f"mssql+pyodbc://{DB_CONFIG['user']}:{DB_CONFIG['password']}@{DB_CONFIG['host']}/{DB_CONFIG['database']}?driver={driver}&TrustServerCertificate=yes"
+            # خواندن مقادیر از کانفیگ
+            driver = self.db_config.get('driver', 'ODBC Driver 18 for SQL Server')
+            user = self.db_config['user']
+            password = self.db_config['password']
+            host = self.db_config['server'] # در config.ini از 'server' استفاده شده
+            database = self.db_config['database']
+
+            conn_str = f"mssql+pyodbc://{user}:{password}@{host}/{database}?driver={driver.replace(' ', '+')}&TrustServerCertificate=yes"
             self.engine = create_engine(conn_str, fast_executemany=True)
             self.engine.connect().close()
+            logging.info("اتصال به دیتابیس با موفقیت (از طریق config.ini) برقرار شد.")
         except Exception as e:
-            ttk.dialogs.Messagebox.show_error(f"Could not connect to the database:\n{e}", "Connection Error")
+            ttk.dialogs.Messagebox.show_error(f"Could not connect to the database using config.ini:\n{e}", "Connection Error")
             self.destroy()
 
     def load_tables(self):
@@ -100,7 +125,6 @@ class ModernDatabaseViewer(ttk.Window):
             self.auto_adjust_column_width()
             self.status_bar.config(text=f"Displayed '{full_table_name}' with {len(df)} rows.")
             
-            # --- تغییر مهم: دیگر پنجره باز نمی‌شود ---
             self.current_primary_key = self.get_primary_key_info(schema, table)
             if not self.current_primary_key:
                 self.status_bar.config(text=f"Warning: Primary Key not found for '{full_table_name}'. Deletion will require manual ID selection.")
@@ -143,10 +167,8 @@ class ModernDatabaseViewer(ttk.Window):
             messagebox.showwarning("No Selection", "Please select one or more records to delete.")
             return
 
-        # --- تغییر مهم: اگر کلید اصلی پیدا نشده بود، همینجا سوال کن ---
         if not self.current_primary_key:
             self.ask_for_manual_pk(list(self.tree["columns"]))
-            # اگر کاربر پنجره را ببندد و انتخاب نکند
             if not self.current_primary_key:
                 messagebox.showerror("Identifier Not Set", "Unique identifier column is not set. Cannot delete.")
                 return
@@ -169,7 +191,6 @@ class ModernDatabaseViewer(ttk.Window):
                     connection.execute(query, {"pk_val": pk_value})
                 trans.commit()
             
-            # حذف ردیف‌ها از جدول نمایشی بعد از موفقیت در دیتابیس
             for item in selected_items:
                 self.tree.delete(item)
                 records_deleted += 1

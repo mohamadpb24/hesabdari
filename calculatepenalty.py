@@ -51,11 +51,11 @@ def setup_logging():
 
 def apply_penalties():
     """
-    جریمه‌ها را برای تمام اقساط معوق محاسبه و در صورت مغایرت، دیتابیس را به‌روزرسانی می‌کند.
+    جریمه‌ها و وضعیت (Status) اقساط را بر اساس قوانین جدید محاسبه و به‌روزرسانی می‌کند.
     """
     setup_logging()
     logging.info("=================================================")
-    logging.info("شروع فرآیند هوشمند محاسبه و همگام‌سازی جریمه‌ها...")
+    logging.info("شروع فرآیند هوشمند تعیین وضعیت و محاسبه جریمه‌ها...")
 
     if not setup_config():
         return
@@ -82,54 +82,112 @@ def apply_penalties():
             today_jalali_str = jdatetime.date.today().strftime('%Y/%m/%d')
             logging.info(f"تاریخ امروز (شمسی) برای محاسبه: {today_jalali_str}")
 
-            # --- کوئری نهایی برای آپدیت هر چهار ستون ---
+            # --- کوئری هوشمند آپدیت وضعیت و جریمه ---
             query = """
-                WITH CorrectValues AS (
-                    -- مرحله ۱: محاسبه مقادیر صحیح برای تمام اقساط مشمول جریمه
+                WITH CalculationBase AS (
                     SELECT
                         inst.ID,
-                        DATEDIFF(day, DATEADD(day, 3, TRY_CONVERT(date, inst.DueDate, 111)), TRY_CONVERT(date, ?, 111)) AS CorrectPenaltyDays,
-                        (ISNULL(inst.DueAmount, 0) * ISNULL(l.PenaltyRate, 0) / 100) * DATEDIFF(day, DATEADD(day, 3, TRY_CONVERT(date, inst.DueDate, 111)), TRY_CONVERT(date, ?, 111)) AS CorrectPenaltyAmount,
-                        ISNULL(inst.DueAmount, 0) + (ISNULL(inst.DueAmount, 0) * ISNULL(l.PenaltyRate, 0) / 100) * DATEDIFF(day, DATEADD(day, 3, TRY_CONVERT(date, inst.DueDate, 111)), TRY_CONVERT(date, ?, 111)) AS CorrectTotalAmount,
-                        (ISNULL(inst.DueAmount, 0) + (ISNULL(inst.DueAmount, 0) * ISNULL(l.PenaltyRate, 0) / 100) * DATEDIFF(day, DATEADD(day, 3, TRY_CONVERT(date, inst.DueDate, 111)), TRY_CONVERT(date, ?, 111))) - ISNULL(inst.PaidAmount, 0) AS CorrectPaymentRemain
+                        inst.Status AS OldStatus,
+                        inst.DueAmount,
+                        inst.PaidAmount,
+                        inst.DueDate,
+                        inst.PaymentDate,
+                        l.PenaltyRate,
+                        -- محاسبه تعداد روزهای گذشته از سررسید (مثبت یعنی معوق، منفی یعنی آینده)
+                        DATEDIFF(day, TRY_CONVERT(date, inst.DueDate, 111), TRY_CONVERT(date, ?, 111)) AS DaysPassed,
+                        -- محاسبه روزهای مشمول جریمه (کسر ۳ روز تنفس)
+                        CASE 
+                            WHEN DATEDIFF(day, DATEADD(day, 3, TRY_CONVERT(date, inst.DueDate, 111)), TRY_CONVERT(date, ?, 111)) > 0 
+                            THEN DATEDIFF(day, DATEADD(day, 3, TRY_CONVERT(date, inst.DueDate, 111)), TRY_CONVERT(date, ?, 111))
+                            ELSE 0 
+                        END AS PenaltyDaysCalc
                     FROM
                         Installments AS inst
                     JOIN
                         Loans AS l ON inst.Loan_ID = l.ID
-                    WHERE
-                        inst.Status <> 'PAID'
-                        AND DATEDIFF(day, TRY_CONVERT(date, inst.DueDate, 111), TRY_CONVERT(date, ?, 111)) > 3
+                ),
+                CorrectValues AS (
+                    SELECT
+                        ID,
+                        OldStatus,
+                        PenaltyDaysCalc AS NewPenaltyDays,
+                        -- محاسبه مبلغ جریمه جدید
+                        (ISNULL(DueAmount, 0) * ISNULL(PenaltyRate, 0) / 100) * PenaltyDaysCalc AS NewPenaltyAmount,
+                        -- محاسبه کل بدهی جدید
+                        ISNULL(DueAmount, 0) + ((ISNULL(DueAmount, 0) * ISNULL(PenaltyRate, 0) / 100) * PenaltyDaysCalc) AS NewTotalAmount,
+                        -- محاسبه مانده جدید
+                        (ISNULL(DueAmount, 0) + ((ISNULL(DueAmount, 0) * ISNULL(PenaltyRate, 0) / 100) * PenaltyDaysCalc)) - ISNULL(PaidAmount, 0) AS NewPaymentRemain,
+                        
+                        -- *** منطق تعیین وضعیت (Status) ***
+                        CASE
+                            -- ۱. اگر قسط تسویه شده (مانده صفر یا کمتر)، وضعیت پرداخت کامل است
+                            WHEN (ISNULL(DueAmount, 0) + ((ISNULL(DueAmount, 0) * ISNULL(PenaltyRate, 0) / 100) * PenaltyDaysCalc)) - ISNULL(PaidAmount, 0) <= 0 THEN
+                                CASE 
+                                    WHEN OldStatus = 36 THEN 36 -- اگر قبلاً تسویه پیش از موعد کل وام خورده، دست نزن
+                                    WHEN PaymentDate < DueDate THEN 35 -- پرداخت قبل از موعد
+                                    ELSE 32 -- پرداخت کامل سر موعد یا با تاخیر ولی تسویه شده
+                                END
+                            
+                            -- ۲. اگر وضعیت حقوقی است، سیستم اتوماتیک تغییر ندهد (فقط جریمه آپدیت شود)
+                            WHEN OldStatus = 40 THEN 40 
+
+                            -- ۳. بررسی زمان و تاخیر برای اقساط باز
+                            WHEN DaysPassed < 0 THEN 30 -- هنوز موعدش نرسیده
+                            WHEN DaysPassed = 0 THEN 31 -- سررسید امروز است
+                            
+                            -- دوره تنفس (۱ تا ۳ روز)
+                            WHEN DaysPassed BETWEEN 1 AND 3 THEN 
+                                CASE 
+                                    WHEN ISNULL(PaidAmount, 0) > 0 THEN 33 -- بخشی پرداخت شده (ناقص)
+                                    ELSE 37 -- معوق در دوره تنفس
+                                END
+                            
+                            -- مشکوک الوصول (بیش از ۳۵ روز)
+                            WHEN DaysPassed > 35 THEN 39 
+                            
+                            -- معوق عادی (بیش از ۳ روز و کمتر از ۳۵ روز)
+                            WHEN DaysPassed > 3 THEN 
+                                CASE 
+                                    WHEN ISNULL(PaidAmount, 0) > 0 THEN 34 -- بخشی پرداخت شده ولی جریمه دارد
+                                    ELSE 38 -- معوق کامل با جریمه
+                                END
+                                
+                            ELSE OldStatus -- حالت پیش‌فرض
+                        END AS NewStatus
+                    FROM CalculationBase
                 )
-                -- مرحله ۲: آپدیت جدول اصلی فقط در صورت وجود مغایرت در هر یک از چهار ستون
+                -- آپدیت جدول اصلی فقط در صورت وجود تغییر
                 UPDATE inst
                 SET
-                    inst.PenaltyDays = cv.CorrectPenaltyDays,
-                    inst.PenaltyAmount = cv.CorrectPenaltyAmount,
-                    inst.TotalAmount = cv.CorrectTotalAmount,
-                    inst.PaymentRemain = cv.CorrectPaymentRemain
+                    inst.Status = cv.NewStatus,
+                    inst.PenaltyDays = cv.NewPenaltyDays,
+                    inst.PenaltyAmount = cv.NewPenaltyAmount,
+                    inst.TotalAmount = cv.NewTotalAmount,
+                    inst.PaymentRemain = cv.NewPaymentRemain
                 FROM
                     Installments AS inst
                 JOIN
                     CorrectValues AS cv ON inst.ID = cv.ID
                 WHERE
-                    ISNULL(inst.PenaltyDays, 0) <> cv.CorrectPenaltyDays
-                    OR ISNULL(inst.PenaltyAmount, 0) <> cv.CorrectPenaltyAmount
-                    OR ISNULL(inst.TotalAmount, 0) <> cv.CorrectTotalAmount
-                    OR ISNULL(inst.PaymentRemain, 0) <> cv.CorrectPaymentRemain;
+                    inst.Status <> cv.NewStatus
+                    OR ISNULL(inst.PenaltyDays, 0) <> cv.NewPenaltyDays
+                    OR ISNULL(inst.PenaltyAmount, 0) <> cv.NewPenaltyAmount
+                    OR ISNULL(inst.TotalAmount, 0) <> cv.NewTotalAmount
+                    OR ISNULL(inst.PaymentRemain, 0) <> cv.NewPaymentRemain;
             """
             
-            logging.info("در حال اجرای کوئری همگام‌سازی جریمه‌ها...")
-            # تاریخ امروز پنج بار به عنوان پارامتر به کوئری ارسال می‌شود
-            params = (today_jalali_str, today_jalali_str, today_jalali_str, today_jalali_str, today_jalali_str)
+            logging.info("در حال اجرای کوئری همگام‌سازی وضعیت‌ها و جریمه‌ها...")
+            # تاریخ امروز ۳ بار برای محاسبه DaysPassed و PenaltyDaysCalc نیاز است
+            params = (today_jalali_str, today_jalali_str, today_jalali_str)
             cursor.execute(query, params)
             updated_rows = cursor.rowcount
             
             conn.commit()
 
             if updated_rows > 0:
-                logging.info(f"عملیات با موفقیت انجام شد. تعداد {updated_rows} قسط به‌روزرسانی شدند.")
+                logging.info(f"عملیات با موفقیت انجام شد. تعداد {updated_rows} قسط به‌روزرسانی (تعیین وضعیت/محاسبه جریمه) شدند.")
             else:
-                logging.info("تمام جریمه‌ها در دیتابیس صحیح و به‌روز بودند. هیچ تغییری لازم نبود.")
+                logging.info("اطلاعات تمام اقساط صحیح و به‌روز بود. تغییری اعمال نشد.")
 
     except configparser.Error as e:
         logging.critical(f"خطا در خواندن فایل کانفیگ: {e}")
@@ -138,7 +196,7 @@ def apply_penalties():
     except Exception as e:
         logging.critical(f"یک خطای پیش‌بینی نشده رخ داد: {e}", exc_info=True)
     finally:
-        logging.info("پایان فرآیند همگام‌سازی جریمه‌ها.")
+        logging.info("پایان فرآیند.")
         logging.info("=================================================\n")
 
 if __name__ == "__main__":

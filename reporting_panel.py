@@ -152,13 +152,36 @@ class ReportingPanel(QWidget):
         self.customer_combo.clear()
         customers = self.db_manager.get_all_customers_with_details()
         self.customer_combo.addItem("یک مشتری را انتخاب کنید...", None)
-        for customer_tuple in customers:
-            # تبدیل تاپل به دیکشنری برای استفاده آسان‌تر
-            customer_data = {
-                'id': customer_tuple[0], 'name': customer_tuple[1], 'national_code': customer_tuple[2],
-                'phone_number': customer_tuple[3], 'address': customer_tuple[4], 'total_debt': customer_tuple[5]
-            }
-            self.customer_combo.addItem(customer_data['name'], customer_data)
+        
+        if customers:
+            for customer in customers:
+                # روش هوشمند: هم دیکشنری و هم تاپل را پشتیبانی می‌کند
+                try:
+                    # تلاش برای خواندن به صورت دیکشنری (نام ستون‌ها در SQL)
+                    c_id = customer['ID']
+                    c_name = customer['FullName']
+                    c_nat = customer['NationalID']
+                    c_phone = customer['PhoneNumber']
+                    c_addr = customer['Address']
+                    c_debt = customer['TotalDebt']
+                except (TypeError, KeyError, IndexError):
+                    # اگر خطا داد، یعنی فرمت تاپل است
+                    c_id = customer[0]
+                    c_name = customer[1]
+                    c_nat = customer[2]
+                    c_phone = customer[3]
+                    c_addr = customer[4]
+                    c_debt = customer[5]
+
+                customer_data = {
+                    'id': c_id, 
+                    'name': c_name, 
+                    'national_code': c_nat,
+                    'phone_number': c_phone, 
+                    'address': c_addr, 
+                    'total_debt': c_debt
+                }
+                self.customer_combo.addItem(c_name, customer_data)
 
     def load_cashboxes_to_combo(self):
         self.cashbox_combo.clear()
@@ -224,21 +247,64 @@ class ReportingPanel(QWidget):
             jdatetime.datetime.strptime(start_date, '%Y/%m/%d')
             jdatetime.datetime.strptime(end_date, '%Y/%m/%d')
         except ValueError:
-            QMessageBox.warning(self, "خطا", "فرمت تاریخ صحیح نیست. لطفاً از فرمت YYYY/MM/DD استفاده کنید.")
+            QMessageBox.warning(self, "خطا", "فرمت تاریخ صحیح نیست.")
             return
 
-        installments = self.db_manager.get_installments_by_date_range(start_date, end_date, status)
-        if not installments:
-            QMessageBox.information(self, "گزارش خالی", "هیچ قسطی با این فیلترها یافت نشد.")
+        # دریافت داده‌ها (شامل کد وام)
+        raw_installments = self.db_manager.get_installments_by_date_range(start_date, end_date, status)
+        
+        if not raw_installments:
+            QMessageBox.information(self, "گزارش خالی", "هیچ قسطی یافت نشد.")
             return
+
+        formatted_installments = []
+        
+        for inst in raw_installments:
+            try:
+                # تلاش برای خواندن به صورت دیکشنری
+                DueDate = inst['DueDate']
+                DueAmount = inst['DueAmount']
+                PaidAmount = inst['PaidAmount']
+                Status = inst['Status']
+                FullName = inst['FullName']
+                PhoneNumber = inst['PhoneNumber']
+                InstCode = inst['Code']
+                LoanCode = inst['LoanCode'] # ستون جدید
+            except (TypeError, KeyError, IndexError):
+                # تلاش برای خواندن به صورت تاپل (بر اساس ترتیب SELECT در db_manager)
+                DueDate = inst[0]
+                DueAmount = inst[1]
+                PaidAmount = inst[2]
+                Status = inst[3]
+                FullName = inst[4]
+                PhoneNumber = inst[5]
+                InstCode = inst[6]
+                LoanCode = inst[7] # ایندکس 7 (ستون آخر)
+
+            # ساخت دیکشنری نهایی
+            formatted_item = {
+                'due_date': DueDate,
+                'amount_due': DueAmount,
+                'paid_amount': PaidAmount,
+                'amount_paid': PaidAmount, # جهت اطمینان
+                'status': Status,
+                'customer_name': FullName,
+                'phone_number': PhoneNumber,
+                'code': InstCode,           # کد قسط
+                'loan_readable_id': LoanCode # <--- کلید حل مشکل (کد پرونده وام)
+            }
+            formatted_installments.append(formatted_item)
 
         file_path, _ = QFileDialog.getSaveFileName(self, "ذخیره گزارش اقساط", "گزارش_اقساط.pdf", "PDF Files (*.pdf)")
         if file_path:
-            success = report_generator.create_installments_report(installments, start_date, end_date, status, file_path)
-            if success:
-                QMessageBox.information(self, "موفقیت", "گزارش با موفقیت ذخیره شد.")
-            else:
-                QMessageBox.critical(self, "خطا", "خطا در ساخت گزارش PDF.")
+            try:
+                success = report_generator.create_installments_report(formatted_installments, start_date, end_date, status, file_path)
+                if success:
+                    QMessageBox.information(self, "موفقیت", "گزارش ذخیره شد.")
+                else:
+                    QMessageBox.critical(self, "خطا", "خطا در ساخت PDF.")
+            except Exception as e:
+                QMessageBox.critical(self, "خطا", f"خطا: {e}")
 
 
 
