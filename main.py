@@ -1,226 +1,238 @@
-# main.py
 import sys
 from PyQt5.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
-    QLabel, QPushButton, QStackedWidget, QMessageBox
+    QApplication, QMainWindow, QWidget, QVBoxLayout, 
+    QHBoxLayout, QPushButton, QLabel, QFrame, QStackedWidget, 
+    QDesktopWidget, QGraphicsDropShadowEffect
 )
-from PyQt5.QtGui import QFont
-from PyQt5.QtCore import Qt
+from PyQt5.QtGui import QIcon, QFont, QColor
+from PyQt5.QtCore import Qt, QSize
 
+# --- ایمپورت پنل‌ها ---
+from dashboard_panel import DashboardPanel
 from customer_panel import CustomerPanel
-from cashbox_panel import CashboxPanel
 from loan_panel import LoanPanel
 from installment_panel import InstallmentPanel
-from transaction_panel import TransactionPanel
-from dashboard_panel import DashboardPanel
+from cashbox_panel import CashboxPanel
 from expense_panel import ExpensePanel
 from reporting_panel import ReportingPanel
 from manual_transaction_panel import ManualTransactionPanel
-from db_manager import DatabaseManager
-
-LIGHT_THEME_STYLESHEET = """
-QWidget {
-    background-color: #f0f2f5; /* پس‌زمینه اصلی برنامه */
-    color: #2c3e50; /* رنگ متن اصلی */
-    font-family: "B Yekan";
-    font-size: 10pt;
-}
-QFrame {
-    background-color: #ffffff; /* پس‌زمینه فریم‌ها و کارت‌ها */
-    border-radius: 12px;
-}
-QLabel {
-    background-color: transparent;
-    font-size: 11pt;
-    color: #34495e; /* رنگ متن لیبل‌ها */
-}
-QLineEdit, QComboBox, QDateEdit, QDoubleSpinBox {
-    background-color: #ffffff;
-    color: #2c3e50;
-    border: 1px solid #dfe6e9;
-    border-radius: 8px;
-    padding: 10px;
-    font-size: 10pt;
-}
-QComboBox::drop-down {
-    border: none;
-}
-QPushButton {
-    background-color: #3b82f6;
-    color: white;
-    border-radius: 8px;
-    padding: 10px 15px;
-    font-size: 11pt;
-    font-weight: bold;
-    border: none;
-}
-QPushButton:hover {
-    background-color: #2563eb;
-}
-QPushButton:disabled {
-    background-color: #bdc3c7;
-    color: #7f8c8d;
-}
-QTableWidget {
-    background-color: #ffffff;
-    border: 1px solid #dfe6e9;
-    border-radius: 8px;
-    gridline-color: #dfe6e9;
-    color: #34495e;
-}
-QHeaderView::section {
-    background-color: #f8f9fa;
-    color: #34495e;
-    padding: 8px;
-    border: none;
-    font-weight: bold;
-}
-QDialog {
-    background-color: #f0f2f5;
-}
-QScrollArea {
-    border: none;
-    background-color: #f0f2f5;
-}
-"""
+# --- ایمپورت پنل جدید ---
+from arrears_panel import ArrearsPanel 
 
 class MainApp(QMainWindow):
     def __init__(self):
         super().__init__()
+        self.setWindowTitle("سیستم مدیریت صندوق و وام پژواک")
+        self.resize(1200, 800)
+        self.center()
         
-        try:
-            self.db_manager = DatabaseManager()
-        except Exception as e:
-            QMessageBox.critical(self, "خطای اتصال", f"برنامه قادر به اتصال به پایگاه داده نیست.\nخطا: {e}")
-            sys.exit(1)
+        # تنظیم جهت برنامه به راست‌چین (RTL) برای فارسی
+        self.setLayoutDirection(Qt.RightToLeft)
+        
+        # استایل کلی برنامه
+        self.setStyleSheet("""
+            QMainWindow { background-color: #f4f6f9; }
+            QWidget { font-family: "B Yekan", "Tahoma", sans-serif; }
+            
+            /* استایل منوی سمت راست */
+            QFrame#Sidebar {
+                background-color: #2c3e50;
+                border-top-left-radius: 20px;
+                border-bottom-left-radius: 20px;
+            }
+            
+            /* استایل دکمه‌های منو */
+            QPushButton.SidebarBtn {
+                background-color: transparent;
+                color: #ecf0f1;
+                text-align: right;
+                padding: 12px 20px;
+                border: none;
+                font-size: 14px;
+                border-radius: 10px;
+                margin: 2px 10px;
+            }
+            QPushButton.SidebarBtn:hover {
+                background-color: #34495e;
+            }
+            QPushButton.SidebarBtn:checked {
+                background-color: #3498db;
+                color: white;
+                font-weight: bold;
+            }
+        """)
 
-        self.setWindowTitle("سیستم حسابداری فروش اقساطی")
-        
+        # ویجت اصلی
         self.central_widget = QWidget()
         self.setCentralWidget(self.central_widget)
         self.main_layout = QHBoxLayout(self.central_widget)
-        self.main_layout.setContentsMargins(10, 10, 10, 10)
-        self.main_layout.setSpacing(10)
+        self.main_layout.setContentsMargins(0, 0, 0, 0)
+        self.main_layout.setSpacing(0)
+
+        # ساخت منوی سمت راست و پنل محتوا
+        self.init_ui()
+
+    def center(self):
+        qr = self.frameGeometry()
+        cp = QDesktopWidget().availableGeometry().center()
+        qr.moveCenter(cp)
+        self.move(qr.topLeft())
+
+    def init_ui(self):
+        # 1. منوی سمت راست (Sidebar)
+        self.sidebar = self.setup_sidebar()
+        self.main_layout.addWidget(self.sidebar)
+
+        # 2. پنل محتوا (Content Area)
+        self.content_area = QWidget()
+        self.content_layout = QVBoxLayout(self.content_area)
+        self.content_layout.setContentsMargins(15, 15, 15, 15)
         
-        self.sidebar_widget = QWidget()
-        self.sidebar_widget.setFixedWidth(250)
-        self.sidebar_widget.setStyleSheet("""
-            background-color: #ffffff;
-            border-radius: 10px;
-        """)
-        self.sidebar_layout = QVBoxLayout(self.sidebar_widget)
-        self.sidebar_layout.setSpacing(10)
-        self.sidebar_layout.setContentsMargins(10, 20, 10, 20)
-        self.sidebar_layout.setAlignment(Qt.AlignTop)
+        # استفاده از StackedWidget برای نمایش پنل‌ها
+        self.stack = QStackedWidget()
         
-        app_title = QLabel("حسابداری اقساطی")
-        app_title.setFont(QFont("B Yekan", 16, QFont.Bold))
-        app_title.setAlignment(Qt.AlignCenter)
-        self.sidebar_layout.addWidget(app_title)
-        self.sidebar_layout.addSpacing(20)
-        
-        self.stacked_widget = QStackedWidget()
-        self.stacked_widget.setStyleSheet("background-color: #f0f2f5; border-radius: 10px;")
-        
-        # ساخت نمونه از تمام پنل‌ها
+        # --- ایجاد و افزودن پنل‌ها به استک ---
         self.dashboard_panel = DashboardPanel()
         self.customer_panel = CustomerPanel()
-        self.cashbox_panel = CashboxPanel()
         self.loan_panel = LoanPanel()
         self.installment_panel = InstallmentPanel()
-        self.manual_transaction_panel = ManualTransactionPanel()
+        self.cashbox_panel = CashboxPanel()
         self.expense_panel = ExpensePanel()
         self.reporting_panel = ReportingPanel()
-        self.transaction_panel = TransactionPanel()
+        
+        # پنل‌های تراکنش دستی (اختیاری، اگر دکمه جدا دارد)
+        # self.manual_trans_panel = ManualTransactionPanel() 
+        
+        # --- افزودن پنل جدید معوقات ---
+        self.arrears_panel = ArrearsPanel()
+        
+        # ترتیب افزودن به استک مهم است (برای ایندکس‌دهی)
+        self.stack.addWidget(self.dashboard_panel)    # index 0
+        self.stack.addWidget(self.customer_panel)     # index 1
+        self.stack.addWidget(self.loan_panel)         # index 2
+        self.stack.addWidget(self.installment_panel)  # index 3
+        self.stack.addWidget(self.cashbox_panel)      # index 4
+        self.stack.addWidget(self.expense_panel)      # index 5
+        self.stack.addWidget(self.reporting_panel)    # index 6
+        self.stack.addWidget(self.arrears_panel)      # index 7 (پنل جدید)
 
-        self.panels = {
-            "dashboard": self.dashboard_panel,
-            "customers": self.customer_panel,
-            "cashboxes": self.cashbox_panel,
-            "loans": self.loan_panel,
-            "installments": self.installment_panel,
-            "manual_transactions": self.manual_transaction_panel,
-            "expenses": self.expense_panel,
-            "reporting": self.reporting_panel,
-            "transactions": self.transaction_panel,
-        }
+        self.content_layout.addWidget(self.stack)
+        self.main_layout.addWidget(self.content_area)
         
-        for panel in self.panels.values():
-            self.stacked_widget.addWidget(panel)
-        
-        self.main_layout.addWidget(self.sidebar_widget)
-        self.main_layout.addWidget(self.stacked_widget)
-        
-        self.add_sidebar_buttons()
-        self.stacked_widget.setCurrentWidget(self.panels["dashboard"])
+        # تنظیم پیش‌فرض روی داشبورد
+        self.switch_panel(self.dashboard_panel, self.btn_dashboard)
 
-    def add_sidebar_buttons(self):
-        for text, panel_name in self.get_buttons_info():
-            btn = self.create_button(text)
-            self.sidebar_layout.addWidget(btn)
-            btn.clicked.connect(lambda _, name=panel_name: self.switch_panel(self.panels[name]))
+    def setup_sidebar(self):
+        sidebar_frame = QFrame()
+        sidebar_frame.setObjectName("Sidebar")
+        sidebar_frame.setFixedWidth(240)
         
-        self.sidebar_layout.addStretch()
+        # سایه برای زیبایی
+        shadow = QGraphicsDropShadowEffect()
+        shadow.setBlurRadius(20)
+        shadow.setColor(QColor(0, 0, 0, 50))
+        shadow.setOffset(5, 0)
+        sidebar_frame.setGraphicsEffect(shadow)
 
-    def create_button(self, text):
-        btn = QPushButton(text)
-        btn.setMinimumHeight(45)
-        btn.setFont(QFont("B Yekan", 12))
-        btn.setStyleSheet("""
-            QPushButton {
-                background-color: transparent;
-                color: #4b5569;
-                border: none;
-                padding: 10px;
-                padding-right: 20px;
-                text-align: right;
-                border-radius: 8px;
-            }
-            QPushButton:hover {
-                background-color: #e5e7eb;
-                color: #1f2937;
-            }
-            QPushButton:checked {
-                background-color: #3b82f6;
-                color: white;
-            }
+        layout = QVBoxLayout(sidebar_frame)
+        layout.setContentsMargins(0, 30, 0, 20)
+        layout.setSpacing(10)
+
+        # عنوان یا لوگوی بالای منو
+        app_title = QLabel("حسابداری پژواک")
+        app_title.setStyleSheet("color: white; font-size: 20px; font-weight: bold; margin-bottom: 20px;")
+        app_title.setAlignment(Qt.AlignCenter)
+        layout.addWidget(app_title)
+
+        # --- تعریف دکمه‌ها ---
+        self.btn_dashboard = self.create_sidebar_btn("داشبورد", "icons/dashboard.png")
+        self.btn_customers = self.create_sidebar_btn("مدیریت مشتریان", "icons/users.png")
+        self.btn_loans = self.create_sidebar_btn("مدیریت وام‌ها", "icons/loan.png")
+        self.btn_installments = self.create_sidebar_btn("مدیریت اقساط", "icons/installment.png")
+        self.btn_cashbox = self.create_sidebar_btn("صندوق و تراکنش", "icons/cashbox.png")
+        self.btn_expenses = self.create_sidebar_btn("هزینه‌ها", "icons/expense.png")
+        self.btn_reports = self.create_sidebar_btn("گزارشات", "icons/report.png")
+        
+        # --- دکمه جدید ---
+        self.btn_arrears = self.create_sidebar_btn("گزارش معوقات", "icons/warning.png") # آیکون هشدار برای معوقات
+        
+        self.btn_exit = self.create_sidebar_btn("خروج", "icons/exit.png")
+        self.btn_exit.setStyleSheet("""
+            QPushButton.SidebarBtn { color: #e74c3c; }
+            QPushButton.SidebarBtn:hover { background-color: #c0392b; color: white; }
         """)
+
+        # --- اتصال عملکرد دکمه‌ها ---
+        self.btn_dashboard.clicked.connect(lambda: self.switch_panel(self.dashboard_panel, self.btn_dashboard))
+        self.btn_customers.clicked.connect(lambda: self.switch_panel(self.customer_panel, self.btn_customers))
+        self.btn_loans.clicked.connect(lambda: self.switch_panel(self.loan_panel, self.btn_loans))
+        self.btn_installments.clicked.connect(lambda: self.switch_panel(self.installment_panel, self.btn_installments))
+        self.btn_cashbox.clicked.connect(lambda: self.switch_panel(self.cashbox_panel, self.btn_cashbox))
+        self.btn_expenses.clicked.connect(lambda: self.switch_panel(self.expense_panel, self.btn_expenses))
+        self.btn_reports.clicked.connect(lambda: self.switch_panel(self.reporting_panel, self.btn_reports))
+        
+        # اتصال دکمه جدید به پنل معوقات
+        self.btn_arrears.clicked.connect(lambda: self.switch_panel(self.arrears_panel, self.btn_arrears))
+        
+        self.btn_exit.clicked.connect(self.close)
+
+        # افزودن به لی‌اوت
+        layout.addWidget(self.btn_dashboard)
+        layout.addWidget(self.btn_customers)
+        layout.addWidget(self.btn_loans)
+        layout.addWidget(self.btn_installments)
+        layout.addWidget(self.btn_cashbox)
+        layout.addWidget(self.btn_expenses)
+        layout.addWidget(self.btn_reports)
+        
+        # افزودن دکمه جدید به لیست
+        layout.addWidget(self.btn_arrears)
+        
+        layout.addStretch() # فاصله انداز
+        layout.addWidget(self.btn_exit)
+
+        return sidebar_frame
+
+    def create_sidebar_btn(self, text, icon_path):
+        btn = QPushButton(text)
+        btn.setProperty("class", "SidebarBtn") # برای شناسایی در CSS
+        # اگر آیکون دارید، خط زیر را فعال کنید. فعلا کامنت شده تا ارور ندهد
+        # btn.setIcon(QIcon(icon_path))
+        # btn.setIconSize(QSize(24, 24))
+        btn.setCursor(Qt.PointingHandCursor)
         btn.setCheckable(True)
         return btn
 
-    def switch_panel(self, panel):
-        for i in range(self.sidebar_layout.count()):
-            widget = self.sidebar_layout.itemAt(i).widget()
-            if isinstance(widget, QPushButton):
-                panel_name = next((name for name, p in self.panels.items() if p == panel), None)
-                button_text = next((text for text, name in self.get_buttons_info() if name == panel_name), None)
-                widget.setChecked(widget.text() == button_text)
-
-        self.stacked_widget.setCurrentWidget(panel)
-        if hasattr(panel, 'refresh_data'):
-            panel.refresh_data()
-    
-    def get_buttons_info(self):
-        return [
-            ("داشبورد", "dashboard"),
-            ("مشتریان", "customers"),
-            ("صندوق‌ها", "cashboxes"),
-            ("پرداخت وام", "loans"),
-            ("پرداخت اقساط", "installments"),
-            ("ایجاد تراکنش دستی", "manual_transactions"),
-            ("هزینه‌ها", "expenses"),
-            ("گزارش‌گیری", "reporting"),
-            ("لیست کل تراکنش‌ها", "transactions"),
+    def switch_panel(self, panel_widget, active_btn):
+        # 1. تغییر پنل در استک
+        self.stack.setCurrentWidget(panel_widget)
+        
+        # 2. مدیریت وضعیت ظاهری دکمه‌ها (فقط دکمه فعال رنگی باشد)
+        buttons = [
+            self.btn_dashboard, self.btn_customers, self.btn_loans,
+            self.btn_installments, self.btn_cashbox, self.btn_expenses,
+            self.btn_reports, self.btn_arrears
         ]
-
+        
+        for btn in buttons:
+            btn.setChecked(False)
+        
+        active_btn.setChecked(True)
+        
+        # 3. رفرش کردن اطلاعات پنل (اگر متد refresh_data داشته باشد)
+        if hasattr(panel_widget, 'refresh_data'):
+            try:
+                panel_widget.refresh_data()
+            except Exception as e:
+                print(f"Error refreshing data: {e}")
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
-    app.setStyleSheet(LIGHT_THEME_STYLESHEET)
-    app.setFont(QFont("B Yekan", 10))
-    main_window = MainApp()
-    main_window.showMaximized()
     
-    main_window.switch_panel(main_window.panels["dashboard"])
+    # تنظیم فونت کلی برنامه
+    font = QFont("B Yekan", 10)
+    app.setFont(font)
     
+    window = MainApp()
+    window.show()
     sys.exit(app.exec_())

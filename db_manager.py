@@ -329,26 +329,35 @@ class DatabaseManager:
 
     def get_customers_paginated(self, page: int, page_size: int, search_query: str = "") -> List[Dict[str, Any]]:
             offset = (page - 1) * page_size
-            # --- اصلاح شد: ستون Gender اضافه شد ---
+            
+            # کوئری اصلاح شده برای محاسبه دقیق بدهی/بستانکاری
+            # شامل: مانده وام + پرداخت‌های دستی (بدهی مشتری) - دریافت‌های دستی (طلب مشتری)
             base_query = """
                 SELECT 
                     p.ID, p.Code, p.FullName, p.NationalID, p.PhoneNumber, p.Address, p.Gender,
-                    ISNULL(SUM(l.RemainAmount), 0) as TotalDebt
+                    (
+                        -- 1. جمع مانده وام‌های فعال
+                        ISNULL((SELECT SUM(RemainAmount) FROM Loans WHERE Person_ID = p.ID AND Status = 'ACTIVE'), 0)
+                        +
+                        -- 2. جمع مبالغی که دستی به مشتری پرداخت شده (بدهکار می‌شود)
+                        ISNULL((SELECT SUM(Amount) FROM Payments WHERE Person_ID = p.ID AND PaymentType IN ('manual_payment', 'ManualPayment')), 0)
+                        -
+                        -- 3. جمع مبالغی که دستی از مشتری دریافت شده (بستانکار می‌شود)
+                        ISNULL((SELECT SUM(Amount) FROM Payments WHERE Person_ID = p.ID AND PaymentType IN ('manual_receipt', 'ManualReceipt')), 0)
+                    ) as TotalDebt
                 FROM 
                     [Persons] p
-                LEFT JOIN 
-                    [Loans] l ON p.ID = l.Person_ID AND l.Status = 'ACTIVE'
                 WHERE p.IsActive = 1
             """
+            
             params = []
             if search_query:
                 base_query += " AND (p.FullName LIKE ? OR p.NationalID LIKE ? OR p.PhoneNumber LIKE ?)"
                 search_term = f"%{search_query}%"
                 params.extend([search_term, search_term, search_term])
             
-            # --- اصلاح شد: ستون Gender به GROUP BY اضافه شد ---
+            # مرتب‌سازی و صفحه‌بندی
             base_query += """
-                GROUP BY p.ID, p.Code, p.FullName, p.NationalID, p.PhoneNumber, p.Address, p.Gender, p.CreatedDate
                 ORDER BY p.CreatedDate DESC 
                 OFFSET ? ROWS FETCH NEXT ? ROWS ONLY
             """
@@ -356,19 +365,19 @@ class DatabaseManager:
             
             return self._execute_query(base_query, tuple(params), fetch='all')
 
-    def get_person_transactions(self, person_id: str) -> list:
-        """تمام تراکنش‌های مربوط به یک شخص خاص را از جدول Payments برمی‌گرداند."""
+    def get_customer_transactions(self, person_id):
+        """لیست تمام تراکنش‌های مالی یک مشتری را برمی‌گرداند"""
+        # اصلاح شد: استفاده از _execute_query و نام صحیح ستون‌ها
         query = """
-            SELECT
-                p.PaymentDate,
-                p.PaymentType,
+            SELECT 
+                p.ID,
+                p.PaymentDate as Date,
                 p.Amount,
-                p.Description,
-                f.FundName
+                p.PaymentType,
+                p.Description
             FROM Payments p
-            LEFT JOIN Funds f ON p.Fund_ID = f.ID
             WHERE p.Person_ID = ?
-            ORDER BY p.PaymentDate DESC
+            ORDER BY p.PaymentDateEn DESC
         """
         return self._execute_query(query, (person_id,), fetch='all')
     # --- مدیریت صندوق‌ها (Funds) ---
@@ -426,7 +435,7 @@ class DatabaseManager:
     def get_fund_transactions(self, fund_id: str) -> List[Any]:
         """
         دریافت تراکنش‌های صندوق با نام طرف حساب دقیق (Counterparty).
-        ترتیب: قدیمی به جدید (ASC) برای محاسبه دقیق مانده.
+        ترتیب: قدیمی به جدید (ASC) بر اساس تاریخ شمسی (PaymentDate).
         """
         query = """
         SELECT
@@ -449,7 +458,6 @@ class DatabaseManager:
                 WHEN p.PaymentType IN ('capital_injection', 'CapitalInjection') THEN N'افزایش سرمایه'
                 
                 -- 3. پرداخت به فروشگاه (شامل StorePayment و TransfertoStore)
-                -- فرمت نمایش: نام فروشگاه (نام مشتری)
                 WHEN p.PaymentType IN ('StorePayment', 'TransfertoStore') THEN 
                     (SELECT s.storename FROM [demodeln_Pezhvak].[Stores] s WHERE s.id = p.Store_ID) +
                     CASE 
@@ -457,7 +465,7 @@ class DatabaseManager:
                         ELSE N'' 
                     END
 
-                -- 4. سایر موارد (هزینه، وام، قسط و ...) -> نمایش نام شخص
+                -- 4. سایر موارد
                 ELSE ISNULL(pr.FullName, N'---')
             END as Counterparty
 
@@ -466,8 +474,9 @@ class DatabaseManager:
         
         WHERE p.Fund_ID = ? OR p.DestinationFund_ID = ?
 
-        -- مرتب‌سازی صعودی (قدیم به جدید) برای محاسبه صحیح مانده
-        ORDER BY p.PaymentDateEn ASC
+        -- تغییر مهم: مرتب‌سازی بر اساس ستون شمسی PaymentDate
+        -- همچنین ID را اضافه کردیم تا اگر تاریخ‌ها یکسان بود، ترتیب ثبت رعایت شود
+        ORDER BY p.PaymentDate ASC, p.ID ASC
         """
         
         # پارامترها (ترتیب ؟ ها در کوئری مهم است)
@@ -812,7 +821,7 @@ class DatabaseManager:
 
     def pay_installment(self, installment_id: str, amount: float, payment_date: str, fund_id: str, description: str = "") -> Tuple[bool, str]:
         """
-        ثبت پرداخت یک قسط، آپدیت مالی و وضعیت‌ها.
+        ثبت پرداخت قسط با تاریخ و زمان دقیق (همراه با میکروثانیه) و توضیحات خودکار.
         """
         # 1. بررسی ورودی‌ها
         if not payment_date:
@@ -820,35 +829,97 @@ class DatabaseManager:
         if amount <= 0:
             return False, "مبلغ پرداخت باید بیشتر از صفر باشد."
 
-        # 2. تبدیل تاریخ شمسی به میلادی برای ذخیره در PaymentDateEn
+        # 2. تنظیم دقیق زمان و تاریخ (شامل میکروثانیه)
         try:
-            date_parts = self._normalize_persian_numbers(payment_date).split('/')
+            # دریافت زمان دقیق فعلی سیستم
+            now = datetime.now()
+            
+            # نرمال‌سازی تاریخ ورودی
+            clean_date = self._normalize_persian_numbers(payment_date).strip()
+            
+            # الف) تاریخ شمسی کامل برای نمایش (مثلاً: 1403/09/25 14:30:05)
+            # برای زیبایی، در شمسی معمولاً میکروثانیه نمایش داده نمی‌شود، اما ثانیه مهم است
+            current_time_str = now.strftime("%H:%M:%S")
+            payment_date_full = f"{clean_date} {current_time_str}"
+            
+            # ب) تاریخ میلادی دقیق (Timestamp) برای ذخیره در دیتابیس
+            date_parts = clean_date.split('/')
             y, m, d = map(int, date_parts)
-            payment_date_en = jdatetime.date(y, m, d).togregorian()
+            
+            # ساخت آبجکت jdatetime با تمام جزئیات (ساعت، دقیقه، ثانیه، میکروثانیه)
+            j_dt = jdatetime.datetime(y, m, d, now.hour, now.minute, now.second, now.microsecond)
+            
+            # تبدیل به میلادی (این خروجی دقیقاً فرمت 2025-12-12 13:22:02.983000 را خواهد داشت)
+            payment_date_en = j_dt.togregorian()
+            
         except Exception as e:
             return False, f"فرمت تاریخ اشتباه است: {e}"
 
-        # 3. دریافت اطلاعات قسط و وام
-        inst = self._execute_query("SELECT * FROM Installments WHERE ID = ?", (installment_id,), fetch='one')
+        # 3. دریافت اطلاعات تکمیلی برای ساخت شرح تراکنش
+        query_info = """
+            SELECT 
+                i.*, 
+                l.Code as LoanCode, 
+                p.FullName 
+            FROM Installments i
+            JOIN Loans l ON i.Loan_ID = l.ID
+            JOIN Persons p ON i.Person_ID = p.ID
+            WHERE i.ID = ?
+        """
+        inst = self._execute_query(query_info, (installment_id,), fetch='one')
         if not inst: return False, "قسط یافت نشد."
         
         loan_id = inst['Loan_ID']
         person_id = inst['Person_ID']
         
+        # 4. ساخت شرح تراکنش هوشمند
+        try:
+            remain = float(inst['PaymentRemain']) if inst['PaymentRemain'] else 0.0
+            pay_type_str = "ناقص" if amount < remain else "کامل"
+            
+            inst_code = inst['Code']
+            # تلاش برای استخراج شماره قسط از کد (مثلاً 20001-05 -> 5)
+            if '-' in str(inst_code):
+                inst_number = int(inst_code.split('-')[-1])
+            else:
+                inst_number = "?"
+            
+            auto_desc = f"پرداخت {pay_type_str} قسط {inst_number} وام {inst['LoanCode']} {inst['FullName']}"
+            
+            if description and description.strip():
+                final_description = f"{auto_desc} - {description}"
+            else:
+                final_description = auto_desc
+                
+        except Exception as e:
+            final_description = description if description else "پرداخت قسط"
+            logging.error(f"Error generating description: {e}")
+
+        # 5. تولید کد تراکنش
+        payment_code = self._get_next_payment_code('InstallmentPayment')
+        
         operations = []
 
-        # الف) ثبت تراکنش در جدول Payments
-        # نکته: ما PaymentDateEn را هم ذخیره می‌کنیم تا در مرتب‌سازی‌ها دقیق باشد
+        # الف) ثبت در Payments (با تاریخ دقیق میلادی)
         operations.append({
             'query': """
                 INSERT INTO Payments (
-                    ID, Person_ID, Fund_ID, Amount, PaymentDate, PaymentDateEn, 
+                    ID, Code, Person_ID, Fund_ID, Loan_ID, Amount, PaymentDate, PaymentDateEn, 
                     PaymentType, Description, Installment_ID
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             'params': (
-                str(uuid.uuid4()), person_id, fund_id, amount, payment_date, payment_date_en,
-                'InstallmentPayment', description, installment_id
+                str(uuid.uuid4()),      
+                payment_code,           
+                person_id,              
+                fund_id,                
+                loan_id,                
+                amount,                 
+                payment_date_full,      # شمسی (رشته)
+                payment_date_en,        # میلادی دقیق (آبجکت datetime با میکروثانیه)
+                'InstallmentPayment',   
+                final_description,      
+                installment_id          
             )
         })
 
@@ -864,19 +935,19 @@ class DatabaseManager:
             'params': (amount, loan_id)
         })
 
-        # د) آپدیت وضعیت خود قسط
-        new_paid_amount = float(inst['PaidAmount']) + amount
-        # محاسبه مانده جدید (TotalAmount شامل اصل + سود + جریمه است)
-        new_payment_remain = float(inst['TotalAmount']) - new_paid_amount
+        # د) آپدیت قسط
+        current_paid = float(inst['PaidAmount']) if inst['PaidAmount'] else 0.0
+        total_amount = float(inst['TotalAmount']) if inst['TotalAmount'] else 0.0
         
-        # تعیین وضعیت جدید
+        new_paid_amount = current_paid + amount
+        new_payment_remain = total_amount - new_paid_amount
+        
         if new_payment_remain <= 0:
             new_payment_remain = 0
             new_status = 32 # پرداخت کامل
-            # اگر با تاخیر بوده، شاید بخواهید وضعیت را "تکمیل با تاخیر" بگذارید (اختیاری)
         else:
-            # هنوز مانده دارد -> وضعیت ناقص
-            if inst['PenaltyAmount'] > 0:
+            penalty_val = float(inst['PenaltyAmount']) if inst['PenaltyAmount'] else 0.0
+            if penalty_val > 0:
                 new_status = 34 # ناقص با جریمه
             else:
                 new_status = 33 # ناقص معمولی
@@ -887,13 +958,8 @@ class DatabaseManager:
                 SET PaidAmount = ?, PaymentRemain = ?, Status = ?, PaymentDate = ? 
                 WHERE ID = ?
             """,
-            'params': (new_paid_amount, new_payment_remain, new_status, payment_date, installment_id)
+            'params': (new_paid_amount, new_payment_remain, new_status, payment_date_full, installment_id)
         })
-
-        # ه) بررسی تسویه کامل وام (اگر همه اقساط پاس شدند)
-        # این کار بهتر است در یک تابع جدا انجام شود، اما فعلاً وضعیت وام را چک می‌کنیم
-        # اگر مانده وام 0 شد، وضعیت وام را ببند
-        # (این بخش پیچیده است و فعلاً می‌گذاریم کاربر دستی تسویه کند یا در آپدیت بعدی اضافه می‌کنیم)
 
         return self._execute_transactional_operations(operations)
 
@@ -1501,7 +1567,44 @@ class DatabaseManager:
             
             return self._execute_query(base_query, tuple(params), fetch='all')
 
-
+    def get_arrears_report(self, start_date: str, end_date: str, include_partial=True):
+            """
+            گزارش اقساط معوق یا پرداخت نشده در بازه زمانی مشخص.
+            شامل نام مشتری، شماره تماس، مبلغ مانده و روزهای تاخیر.
+            """
+            # نرمال‌سازی تاریخ‌ها
+            s_date = self._normalize_persian_numbers(start_date)
+            e_date = self._normalize_persian_numbers(end_date)
+            
+            # وضعیت‌هایی که یعنی قسط کاملاً تسویه شده (این‌ها را نمی‌خواهیم)
+            settled_statuses = (32, 35, 36)
+            
+            query = f"""
+                SELECT 
+                    i.ID as InstallmentID,
+                    i.DueDate,
+                    i.DueAmount,     -- مبلغ کل قسط
+                    i.PaymentRemain, -- مبلغی که هنوز پرداخت نکرده
+                    i.Status,
+                    l.Code as LoanCode,
+                    p.FullName,
+                    p.PhoneNumber,
+                    p.ID as PersonID
+                FROM Installments i
+                JOIN Loans l ON i.Loan_ID = l.ID
+                JOIN Persons p ON i.Person_ID = p.ID
+                WHERE 
+                    i.DueDate >= ? AND i.DueDate <= ?
+                    AND i.Status NOT IN {settled_statuses}
+            """
+            
+            # اگر کاربر فقط "ناقص‌ها و پرداخت نشده‌ها" را بخواهد، شرط بالا کافی است.
+            # اما اگر بخواهیم دقیق‌تر باشیم، PaymentRemain > 0 شرط اصلی است.
+            query += " AND i.PaymentRemain > 0"
+            
+            query += " ORDER BY i.DueDate ASC"
+            
+            return self._execute_query(query, (s_date, e_date), fetch='all')
 
 
 
